@@ -1,0 +1,9 @@
+listen: "127.0.0.1:6666"
+api_key: "REPLACE_WITH_A_RANDOM_32_CHARACTER_OR_LONGER_TOKEN"
+shell: /bin/sh
+additional_paths:
+  - /opt/homebrew/bin
+  - ~/.local/bin
+timeout_seconds: 300
+max_output_bytes: 1048576
+max_concurrent: 4
