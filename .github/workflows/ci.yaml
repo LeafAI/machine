@@ -1,22 +1,68 @@
 name: CI
-on: [push, pull_request]
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
 jobs:
   test:
+    name: Test and build (${{ matrix.os }})
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      GOTOOLCHAIN: auto
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: false
-      - run: go mod tidy
-      - run: go test -race ./...
+      - run: go version
+      - name: Resolve dependencies
+        run: go mod tidy
+      - run: go mod verify
       - run: go vet ./...
+      - run: go test -race -coverprofile=coverage.out ./...
+      - name: Build executable
+        run: go build -trimpath -o machine .
       - name: Verify root package installation
         run: |
           export GOBIN="$RUNNER_TEMP/machine-bin"
           go install .
+          "$GOBIN/machine" --help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: machine-${{ matrix.os }}
+          path: |
+            machine
+            coverage.out
+
+  install:
+    name: Verify public module installation
+    if: github.event_name == 'push' && github.repository == 'LeafAI/machine'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install exact pushed revision
+        working-directory: ${{ runner.temp }}
+        env:
+          GOBIN: ${{ runner.temp }}/machine-install
+          GOTOOLCHAIN: auto
+        run: |
+          go install github.com/LeafAI/machine@${{ github.sha }}
           "$GOBIN/machine" --help
