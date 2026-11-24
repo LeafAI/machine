@@ -1,4 +1,6 @@
 listen: "127.0.0.1:6666"
+# Set false only for trusted local use; api_key may then be omitted.
+auth_required: true
 api_key: "REPLACE_WITH_A_RANDOM_32_CHARACTER_OR_LONGER_TOKEN"
 shell: /bin/sh
 additional_paths:
