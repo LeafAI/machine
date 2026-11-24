@@ -1,0 +1,22 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go mod tidy
+      - run: go test -race ./...
+      - run: go vet ./...
+      - name: Verify root package installation
+        run: |
+          export GOBIN="$RUNNER_TEMP/machine-bin"
+          go install .
+          "$GOBIN/machine" --help
