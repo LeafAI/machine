@@ -29,6 +29,9 @@ type Config struct {
  Listen string `yaml:"listen"`
  APIKey string `yaml:"api_key"`
  AuthRequired bool `yaml:"auth_required"`
+ Tools ToolConfig `yaml:"tools"`
+ Filesystem FilesystemConfig `yaml:"filesystem"`
+ Batch BatchConfig `yaml:"batch"`
  Tunnel TunnelConfig `yaml:"tunnel"`
  Shell string `yaml:"shell"`
  AdditionalPaths []string `yaml:"additional_paths"`
@@ -38,7 +41,7 @@ type Config struct {
 }
 
 func loadConfig(path string) (Config,error) {
- c:=Config{AuthRequired:true,Listen:"127.0.0.1:6666",Shell:"/bin/sh",TimeoutSeconds:300,MaxOutputBytes:1048576,MaxConcurrent:4}
+ c:=Config{Tools:ToolConfig{Enabled:[]string{"shell"}},Filesystem:defaultFilesystem(),Batch:defaultBatch(),AuthRequired:true,Listen:"127.0.0.1:6666",Shell:"/bin/sh",TimeoutSeconds:300,MaxOutputBytes:1048576,MaxConcurrent:4}
  f,e:=os.OpenFile(path,os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW,0); if e!=nil{return c,e}; defer f.Close()
  st,e:=f.Stat(); if e!=nil{return c,e}
  if !st.Mode().IsRegular() || st.Mode().Perm()&0077!=0 || st.Size()>1<<20{return c,errors.New("configuration must be a regular private file (chmod 600)")}
@@ -58,6 +61,7 @@ func loadConfig(path string) (Config,error) {
   if !filepath.IsAbs(p)||strings.ContainsRune(p,os.PathListSeparator){return c,errors.New("additional_paths must be absolute directories")}
   c.AdditionalPaths[i]=p
  }
+ if e=c.validateTools();e!=nil{return c,e}
  return c,nil
 }
 
@@ -137,11 +141,12 @@ func shellToolFromConfig(ctx context.Context,path string,in Input)(*mcp.CallTool
 func newMachineServer(c Config,configPath string)*mcp.Server{
  server:=mcp.NewServer(&mcp.Implementation{Name:"machine",Version:"0.1.0"},nil)
  slots:=make(chan struct{},c.MaxConcurrent)
- mcp.AddTool(server,&mcp.Tool{Name:"shell",Description:"Execute an arbitrary non-interactive shell command with the server user permissions. May change files and system state."},func(ctx context.Context,_ *mcp.CallToolRequest,in Input)(*mcp.CallToolResult,Output,error){
+ if c.enabled("shell"){mcp.AddTool(server,&mcp.Tool{Name:"shell",Description:"Execute an arbitrary non-interactive shell command with the server user permissions. May change files and system state."},func(ctx context.Context,_ *mcp.CallToolRequest,in Input)(*mcp.CallToolResult,Output,error){
   if err:=ctx.Err();err!=nil{return nil,Output{},err}
   select{case slots<-struct{}{}:defer func(){<-slots}();default:return &mcp.CallToolResult{},Output{ExitCode:-1,Error:"shell concurrency limit reached"},nil}
   return shellToolFromConfig(ctx,configPath,in)
- })
+ })}
+ registerNativeTools(server,c,configPath,slots)
  return server
 }
 func main(){
