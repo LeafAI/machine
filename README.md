@@ -116,3 +116,19 @@ Tool calls use local time `YY-MM HH:MM:SS`, single-letter levels `D/I/W/E`, mini
 26-11 14:20:01 I 0001 file_read > path="main.go" lines=1-80
 26-11 14:20:01 I 0001 file_read < ok 3ms
 ```
+
+### Input and output previews
+
+To show parameters and results, enable both options explicitly and restart machine:
+
+```yaml
+logging:
+  level: info
+  tunnel_level: warn
+  log_arguments: true
+  max_argument_bytes: 512
+  log_output: true
+  max_output_bytes: 1024
+```
+
+Both argument and output previews are disabled by default. The startup log reports the effective settings. Output previews contain actual tool result data, including shell stdout/stderr, file contents and errors; they can expose secrets. Enable only in a trusted environment and protect stderr logs. The output limit is independent of tool execution limits and does not alter MCP responses. Large previews are marked truncated; batch operations and aggregate batch results are logged separately.
