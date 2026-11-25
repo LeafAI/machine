@@ -122,3 +122,29 @@ func TestMCPWire(t *testing.T){
  result,err:=session.CallTool(ctx,&mcp.CallToolParams{Name:"shell",Arguments:map[string]any{"command":"printf stdout; printf stderr >&2; exit 7"}})
  if err!=nil||result==nil||result.IsError||result.StructuredContent==nil{t.Fatalf("unexpected MCP result: %v",err)}
 }
+
+func TestForwardCompatibleConfig(t *testing.T){
+ p:=filepath.Join(t.TempDir(),"machine.yaml")
+ body:="auth_required: false\nfuture_section:\n  nested: [1, 2]\nlogging:\n  level: info\n  log_output: true\n  max_output_bytes: 1024\nfilesystem:\n  future_option: true\n"
+ if err:=os.WriteFile(p,[]byte(body),0600);err!=nil{t.Fatal(err)}
+ c,err:=loadConfigWithWarnings(p,true)
+ if err!=nil||c.AuthRequired||c.Logging.Level!="info"||c.MaxConcurrent!=4{t.Fatalf("unknown settings must not prevent valid config: %v",err)}
+ _,out,err:=shellToolFromConfig(context.Background(),p,Input{Command:"printf compatible"})
+ if err!=nil||out.ExitCode!=0||out.Stdout!="compatible"{t.Fatalf("unexpected shell result: %+v %v",out,err)}
+}
+func TestKnownConfigValidationWithUnknownKeys(t *testing.T){
+ for _,body:=range []string{
+  "auth_required: true\nfuture: true\n",
+  "auth_required: false\nmax_concurrent: nope\nfuture: true\n",
+  "auth_required: false\nmax_concurrent: 0\nfuture: true\n",
+  "auth_required: false\nlogging:\n  level: bogus\n  future: true\n",
+  "auth_required: false\nlisten: '0.0.0.0:6666'\nfuture: true\n",
+  "auth_required: false\nauth_required: true\nfuture: true\n",
+  "auth_required: false\nfuture: [\n",
+  "auth_required: false\nfuture: true\n---\nother: true\n",
+ }{
+  p:=filepath.Join(t.TempDir(),"machine.yaml")
+  if err:=os.WriteFile(p,[]byte(body),0600);err!=nil{t.Fatal(err)}
+  if _,err:=loadConfig(p);err==nil{t.Fatalf("invalid known configuration accepted: %q",body)}
+ }
+}

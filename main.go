@@ -42,16 +42,23 @@ type Config struct {
  MaxConcurrent int `yaml:"max_concurrent"`
 }
 
-func loadConfig(path string) (Config,error) {
+func loadConfig(path string) (Config,error) {return loadConfigWithWarnings(path,false)}
+
+func loadConfigWithWarnings(path string,warnUnknown bool) (Config,error) {
  c:=Config{Logging:defaultLogging(),Tools:ToolConfig{Enabled:[]string{"shell"}},Filesystem:defaultFilesystem(),Batch:defaultBatch(),AuthRequired:true,Listen:"127.0.0.1:6666",Shell:"/bin/sh",TimeoutSeconds:300,MaxOutputBytes:1048576,MaxConcurrent:4}
  f,e:=os.OpenFile(path,os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW,0); if e!=nil{return c,e}; defer f.Close()
  st,e:=f.Stat(); if e!=nil{return c,e}
  if !st.Mode().IsRegular() || st.Mode().Perm()&0077!=0 || st.Size()>1<<20{return c,errors.New("configuration must be a regular private file (chmod 600)")}
  if owner,ok:=st.Sys().(*syscall.Stat_t);!ok||owner.Uid!=uint32(os.Geteuid()){return c,errors.New("configuration must be owned by the server user")}
- d:=yaml.NewDecoder(io.LimitReader(f,1<<20));d.KnownFields(true)
- if e=d.Decode(&c);e!=nil{return c,errors.New("invalid configuration YAML")}
+ data,e:=io.ReadAll(io.LimitReader(f,(1<<20)+1));if e!=nil{return c,e}
+ if len(data)>1<<20{return c,errors.New("configuration exceeds 1 MiB")}
+ d:=yaml.NewDecoder(bytes.NewReader(data))
+ if e=d.Decode(&c);e!=nil{return c,errors.New("invalid configuration YAML or known setting type")}
  var extra any
  if e=d.Decode(&extra);e!=io.EOF{return c,errors.New("configuration must contain exactly one YAML document")}
+ // Forward-compatible decoding ignores unknown keys, including nested keys.
+ // A strict diagnostic pass at startup warns without exposing YAML values.
+ if warnUnknown{var probe Config;strict:=yaml.NewDecoder(bytes.NewReader(data));strict.KnownFields(true);if strict.Decode(&probe)!=nil{log.Print("WARNING: configuration contains unknown keys; ignored by this machine version")}}
  if c.AuthRequired && (len(c.APIKey)<32 || strings.IndexFunc(c.APIKey,func(r rune)bool{return unicode.IsSpace(r)||unicode.IsControl(r)})>=0){return c,errors.New("api_key must contain at least 32 non-whitespace characters")}
  host,port,e:=net.SplitHostPort(c.Listen);if e!=nil{return c,errors.New("invalid listen address")}
  n,e:=strconv.Atoi(port);if e!=nil||n<1||n>65535{return c,errors.New("invalid listen port")}
@@ -176,7 +183,7 @@ func main(){
  if len(os.Args)==2 && (os.Args[1]=="--help"||os.Args[1]=="-h"){fmt.Println("machine: authenticated MCP shell server\nConfiguration: $HOME/.config/machine.yaml");return}
  home,e:=os.UserHomeDir();if e!=nil{log.Fatal(e)}
  configPath:=filepath.Join(home,".config","machine.yaml")
- c,e:=loadConfig(configPath);if e!=nil{log.Fatal(e)}
+ c,e:=loadConfigWithWarnings(configPath,true);if e!=nil{log.Fatal(e)}
  if e=c.Tunnel.validate();e!=nil{log.Fatal(e)}
  server:=newMachineServer(c,configPath)
  handler:=mcp.NewStreamableHTTPHandler(func(*http.Request)*mcp.Server{return server},&mcp.StreamableHTTPOptions{Stateless:true})

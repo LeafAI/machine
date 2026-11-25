@@ -117,6 +117,9 @@ Tool calls use local time `YY-MM HH:MM:SS`, single-letter levels `D/I/W/E`, mini
 26-11 14:20:01 I 0001 file_read < ok 3ms
 ```
 
+### Forward-compatible configuration
+
+Unknown YAML keys, including nested settings from newer versions, are ignored. At startup machine emits a warning if unknown keys are present, without logging configuration values. Known settings still require valid types and values; malformed YAML, invalid authentication or resource limits, unsafe file permissions and multiple YAML documents remain rejected. During operation, invalid configuration rejects tool calls without stopping the running server. Unknown keys are not an indication that a feature is supported: verify the installed version before relying on a new security setting. Keep configuration updates atomic.
 ### Input and output previews
 
 To show parameters and results, enable both options explicitly and restart machine:
