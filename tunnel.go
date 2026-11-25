@@ -16,6 +16,7 @@ import (
 type TunnelConfig struct {
  Enabled bool `yaml:"enabled"`
  ID string `yaml:"id"`
+ APIKey string `yaml:"api_key"`
  OrganizationID string `yaml:"organization_id"`
 }
 
@@ -26,7 +27,8 @@ func (c TunnelConfig) sdkConfig() (tunnelclient.Config,error) {
  if id=="" {id=strings.TrimSpace(os.Getenv("CONTROL_PLANE_TUNNEL_ID"))}
  if !tunnelIDPattern.MatchString(id){return tunnelclient.Config{},errors.New("valid tunnel ID required")}
  key:=strings.TrimSpace(os.Getenv("CONTROL_PLANE_API_KEY"))
- if key==""{return tunnelclient.Config{},errors.New("CONTROL_PLANE_API_KEY runtime key required")}
+ if key==""{key=strings.TrimSpace(c.APIKey)}
+ if key==""{return tunnelclient.Config{},errors.New("tunnel.api_key or CONTROL_PLANE_API_KEY runtime key required")}
  org:=strings.TrimSpace(c.OrganizationID)
  if org==""{org=strings.TrimSpace(os.Getenv("CONTROL_PLANE_ORGANIZATION_ID"))}
  return tunnelclient.Config{TunnelID:id,APIKey:key,OrganizationID:org},nil
