@@ -2,6 +2,7 @@ package main
 
 import (
  "context"
+ "bytes"
  "crypto/sha256"
  "encoding/hex"
  "errors"
@@ -55,7 +56,7 @@ func(c *Config) validateTools()error{
 type fileLocation struct{root *os.Root; name string; absolute string}
 func(l fileLocation) close(){_ = l.root.Close()}
 func (f FilesystemConfig) locate(p string)(fileLocation,error){
- if p==""{return fileLocation{},errors.New("path required")}
+ if p==""||len(p)>4096||strings.ContainsRune(p,0){return fileLocation{},errors.New("invalid path")}
  if !filepath.IsAbs(p){if f.DefaultWorkdir==""{return fileLocation{},errors.New("absolute path required")};p=filepath.Join(f.DefaultWorkdir,p)}
  p=filepath.Clean(p)
  for _,base:=range f.AllowedRoots{
@@ -78,7 +79,7 @@ func readText(l fileLocation,limit int)([]byte,fs.FileInfo,error){
  st,e=f.Stat();if e!=nil{return nil,nil,e};if !st.Mode().IsRegular(){return nil,nil,errors.New("regular file required")}
  b,e:=io.ReadAll(io.LimitReader(f,int64(limit)+1));if e!=nil{return nil,nil,e}
  if len(b)>limit{return nil,nil,errors.New("file exceeds read limit")}
- if !utf8.Valid(b)||strings.IndexByte(string(b),0)>=0{return nil,nil,errors.New("binary or non-UTF-8 file")}
+ if !utf8.Valid(b)||bytes.IndexByte(b,0)>=0{return nil,nil,errors.New("binary or non-UTF-8 file")}
  return b,st,nil
 }
 type ReadInput struct{Path string `json:"path"`;StartLine int `json:"start_line"`;EndLine int `json:"end_line"`}
@@ -132,7 +133,7 @@ func fileWrite(ctx context.Context,c Config,in WriteInput)(ChangeOutput,error){
  if exists{if !in.Overwrite||!st.Mode().IsRegular(){return out,errors.New("destination exists or is not a regular file")};mode=st.Mode().Perm()}else if !errors.Is(e,fs.ErrNotExist){return out,e}
  if in.ExpectedSHA256!=""{b,_,e:=readText(l,c.Filesystem.MaxReadBytes);if e!=nil{return out,e};if hashBytes(b)!=in.ExpectedSHA256{return out,errors.New("file changed since read")}}
  if in.CreateParents{if e=l.root.MkdirAll(filepath.Dir(l.name),0700);e!=nil{return out,e}}
- b:=[]byte(in.Content);if e=replaceFile(l,b,mode,exists);e!=nil{return out,e}
+ b:=[]byte(in.Content);if e=ctx.Err();e!=nil{return out,e};if e=replaceFile(l,b,mode,exists);e!=nil{return out,e}
  return ChangeOutput{l.absolute,true,1,hashBytes(b),len(b)},nil
 }
 func fileEdit(ctx context.Context,c Config,in EditInput)(ChangeOutput,error){
@@ -145,9 +146,11 @@ func fileEdit(ctx context.Context,c Config,in EditInput)(ChangeOutput,error){
  if in.OldString!=""{
   if in.StartLine!=0||in.EndLine!=0{return out,errors.New("choose pattern or line range")}
   n=strings.Count(s,in.OldString);if n==0||n>1&&!in.ReplaceAll{return out,fmt.Errorf("expected unique match, found %d",n)}
+  delta:=len(in.NewString)-len(in.OldString);if delta>0&&(len(s)>c.Filesystem.MaxWriteBytes||n>(c.Filesystem.MaxWriteBytes-len(s))/delta){return out,errors.New("edit exceeds write limit")}
   s=strings.ReplaceAll(s,in.OldString,in.NewString)
  }else{a:=linesOf(s);if in.StartLine<1||in.EndLine<in.StartLine||in.EndLine>len(a){return out,errors.New("invalid edit range")};s=strings.Join(a[:in.StartLine-1],"")+in.Content+strings.Join(a[in.EndLine:],"")}
  if len(s)>c.Filesystem.MaxWriteBytes||!utf8.ValidString(s)||strings.ContainsRune(s,0){return out,errors.New("invalid or oversized edit")}
+ if e=ctx.Err();e!=nil{return out,e}
  if e=replaceFile(l,[]byte(s),st.Mode(),true);e!=nil{return out,e}
  return ChangeOutput{l.absolute,true,n,hashBytes([]byte(s)),len(s)},nil
 }
