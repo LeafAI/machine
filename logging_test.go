@@ -36,3 +36,14 @@ func TestShortArgumentSummary(t *testing.T){
  if got:=l.arguments("file_read",ReadInput{Path:"main.go",StartLine:1,EndLine:80});got!=" path=\"main.go\" lines=1-80"{t.Fatal(got)}
  if got:=l.arguments("shell",Input{Command:"go test ./...",Workdir:"/tmp"});got!=" cmd=\"go test ./...\" cwd=\"/tmp\""{t.Fatal(got)}
 }
+
+func TestOutputPreview(t *testing.T){
+ c:=defaultLogging();var b bytes.Buffer
+ l:=newCallLogger(c,&b)
+ if l.output("secret")!=""{t.Fatal("output enabled by default")}
+ c.LogOutput=true;c.MaxOutputBytes=64;l=newCallLogger(c,&b)
+ l.begin("shell",Input{Command:"printf ok"})(true,"",map[string]string{"stdout":"ok\n"})
+ if !strings.Contains(b.String(),`output={"stdout":"ok\n"}`)||strings.Count(b.String(),"\n")!=2{t.Fatal(b.String())}
+ s:=l.output(strings.Repeat("日\n",1000))
+ if len(s)>64+len(" output=")||!strings.Contains(s,"[truncated]")||strings.Contains(s,"\n"){t.Fatal(s)}
+}
