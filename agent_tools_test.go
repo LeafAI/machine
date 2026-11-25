@@ -2,6 +2,10 @@ package main
 
 import (
  "context"
+ "encoding/json"
+ "strings"
+ "time"
+ "github.com/modelcontextprotocol/go-sdk/mcp"
  "os"
  "path/filepath"
  "testing"
@@ -41,5 +45,61 @@ func TestShellOutputModes(t *testing.T){
  for _,v:=range []struct{mode,want string}{{"head","abcd"},{"tail","ghij"},{"head_tail","abij"}}{
   o:=run(context.Background(),c,Input{Command:"printf abcdefghij",MaxOutputBytes:4,OutputMode:v.mode})
   if o.Stdout!=v.want||!o.Truncated||o.ExitCode!=0{t.Fatalf("%s: %+v",v.mode,o)}
+ }
+}
+
+func TestBatchSharedSlots(t *testing.T){
+ c:=testNativeConfig(t);slots:=make(chan struct{},1);slots<-struct{}{}
+ ctx,cancel:=context.WithTimeout(context.Background(),50*time.Millisecond);defer cancel()
+ ctx=context.WithValue(ctx,batchSlotsKey{},slots)
+ out,_:=batch(ctx,c,BatchInput{Parallel:true,Operations:[]BatchOperation{{ID:"a",Tool:"file_info",Arguments:map[string]any{"paths":[]string{"."}}}}})
+ if len(out.Results)!=1||out.Results[0].Error==""{t.Fatalf("expected saturated slot cancellation: %+v",out)}
+ <-slots
+ ctx=context.WithValue(context.Background(),batchSlotsKey{},slots)
+ out,e:=batch(ctx,c,BatchInput{Parallel:true,Operations:[]BatchOperation{{ID:"a",Tool:"file_info",Arguments:map[string]any{"paths":[]string{"."}}},{ID:"b",Tool:"file_info",Arguments:map[string]any{"paths":[]string{"."}}}}})
+ if e!=nil||len(out.Results)!=2||out.Results[0].Error!=""||out.Results[1].Error!=""{t.Fatalf("%+v %v",out,e)}
+}
+func TestBatchBudget(t *testing.T){
+ c:=testNativeConfig(t);c.Batch.MaxOutputBytes=1024;ctx:=context.Background()
+ if _,e:=fileWrite(ctx,c,WriteInput{Path:"large",Content:strings.Repeat("x",900)});e!=nil{t.Fatal(e)}
+ in:=BatchInput{Parallel:true}
+ for _,id:=range []string{"a","b","c","d"}{in.Operations=append(in.Operations,BatchOperation{ID:id,Tool:"file_read",Arguments:map[string]any{"path":"large","start_line":1,"end_line":1}})}
+ out,e:=batch(ctx,c,in);if e!=nil{t.Fatal(e)}
+ b,e:=json.Marshal(out);if e!=nil||len(b)>c.Batch.MaxOutputBytes{t.Fatalf("budget exceeded: %d %v",len(b),e)}
+}
+func TestExpandingEditLimit(t *testing.T){
+ c:=testNativeConfig(t);c.Filesystem.MaxWriteBytes=1024
+ ctx:=context.Background()
+ if _,e:=fileWrite(ctx,c,WriteInput{Path:"a",Content:strings.Repeat("x",100)});e!=nil{t.Fatal(e)}
+ if _,e:=fileEdit(ctx,c,EditInput{Path:"a",OldString:"x",NewString:strings.Repeat("y",100),ReplaceAll:true});e==nil{t.Fatal("oversized expansion accepted")}
+}
+func TestAllToolsMCP(t *testing.T){
+ c:=testNativeConfig(t);p:=filepath.Join(c.Filesystem.DefaultWorkdir,"config.yaml")
+ cfg:="auth_required: false\nmax_concurrent: 1\ntools:\n  enabled: ["+strings.Join(c.Tools.Enabled,", ")+"]\nfilesystem:\n  default_workdir: '"+c.Filesystem.DefaultWorkdir+"'\n  allowed_roots: ['"+c.Filesystem.DefaultWorkdir+"']\n"
+ if e:=os.WriteFile(p,[]byte(cfg),0600);e!=nil{t.Fatal(e)}
+ c,e:=loadConfig(p);if e!=nil{t.Fatal(e)}
+ srv:=newMachineServer(c,p);st,ct:=mcp.NewInMemoryTransports()
+ ctx,cancel:=context.WithTimeout(context.Background(),20*time.Second);defer cancel()
+ go func(){_=srv.Run(ctx,st)}()
+ client:=mcp.NewClient(&mcp.Implementation{Name:"test",Version:"1"},nil)
+ session,e:=client.Connect(ctx,ct,nil);if e!=nil{t.Fatal(e)};defer session.Close()
+ list,e:=session.ListTools(ctx,nil);if e!=nil||len(list.Tools)!=10{t.Fatalf("tool discovery: %v",e)}
+ for _,v:=range []struct{name string;args map[string]any}{
+ {"shell",map[string]any{"command":"printf ok"}},
+ {"file_write",map[string]any{"path":"a.txt","content":"needle"}},
+ {"file_read",map[string]any{"path":"a.txt","start_line":1,"end_line":1}},
+ {"file_edit",map[string]any{"path":"a.txt","old_string":"needle","new_string":"changed"}},
+ {"file_info",map[string]any{"paths":[]string{"a.txt"}}},
+ {"file_search",map[string]any{"path":"a.txt","pattern":"changed"}},
+ {"file_grep",map[string]any{"paths":[]string{"."},"pattern":"changed"}},
+ {"file_glob",map[string]any{"path":".","pattern":"**/*.txt"}},
+ {"directory_list",map[string]any{"path":"."}},
+ {"batch",map[string]any{"parallel":true,"operations":[]map[string]any{{"id":"a","tool":"file_info","arguments":map[string]any{"paths":[]string{"a.txt"}}},{"id":"b","tool":"file_read","arguments":map[string]any{"path":"a.txt","start_line":1,"end_line":1}}}}},
+ }{
+  res,e:=session.CallTool(ctx,&mcp.CallToolParams{Name:v.name,Arguments:v.args})
+  if e!=nil||res==nil||res.IsError||res.StructuredContent==nil{t.Fatalf("%s: %v",v.name,e)}
+  b,e:=json.Marshal(res.StructuredContent);if e!=nil{t.Fatal(e)}
+  var obj map[string]any;if e=json.Unmarshal(b,&obj);e!=nil{t.Fatal(e)}
+  if obj["error"]!=nil&&obj["error"]!=""{t.Fatalf("%s: %s",v.name,b)}
  }
 }
