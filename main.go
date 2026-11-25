@@ -115,6 +115,12 @@ func protectWithAuth(required bool,key string,next http.Handler)http.Handler{
   r.Body=http.MaxBytesReader(w,r.Body,1<<20);w.Header().Set("Cache-Control","no-store");next.ServeHTTP(w,r)
  })
 }
+func shellToolResult(ctx context.Context,c Config,in Input)(*mcp.CallToolResult,Output,error){
+ out:=run(ctx,c,in)
+ // A completed shell invocation is a valid MCP result even if the command fails.
+ // Keep exit status, stderr and timeout information available to the caller.
+ return &mcp.CallToolResult{},out,nil
+}
 func main(){
  if len(os.Args)==2 && (os.Args[1]=="--help"||os.Args[1]=="-h"){fmt.Println("machine: authenticated MCP shell server\nConfiguration: $HOME/.config/machine.yaml");return}
  home,e:=os.UserHomeDir();if e!=nil{log.Fatal(e)}
@@ -124,7 +130,7 @@ func main(){
  slots:=make(chan struct{},c.MaxConcurrent)
  mcp.AddTool(server,&mcp.Tool{Name:"shell",Description:"Execute an arbitrary non-interactive shell command with the server user's permissions. May change files and system state."},func(ctx context.Context,_ *mcp.CallToolRequest,in Input)(*mcp.CallToolResult,Output,error){
   select{case slots<-struct{}{}:defer func(){<-slots}();case <-ctx.Done():return nil,Output{},ctx.Err();default:return nil,Output{},fmt.Errorf("shell concurrency limit reached")}
-  out:=run(ctx,c,in);return &mcp.CallToolResult{IsError:out.ExitCode!=0||out.Error!=""},out,nil
+  return shellToolResult(ctx,c,in)
  })
  handler:=mcp.NewStreamableHTTPHandler(func(*http.Request)*mcp.Server{return server},&mcp.StreamableHTTPOptions{Stateless:true})
  mux:=http.NewServeMux();mux.Handle("/mcp",protectWithAuth(c.AuthRequired,c.APIKey,handler))
