@@ -135,3 +135,7 @@ logging:
 ```
 
 Both argument and output previews are disabled by default. The startup log reports the effective settings. Output previews contain actual tool result data, including shell stdout/stderr, file contents and errors; they can expose secrets. Enable only in a trusted environment and protect stderr logs. The output limit is independent of tool execution limits and does not alter MCP responses. Large previews are marked truncated; batch operations and aggregate batch results are logged separately.
+
+### Tunnel recovery and long-running commands
+
+An unexpected tunnel runtime shutdown or in-memory MCP session closure no longer terminates machine's local HTTP server. The tunnel supervisor creates a fresh SDK client and MCP session after a retry delay starting at one second and capped at 30 seconds. It logs the disconnection reason and retry delay, and stops retrying promptly on process shutdown. A lost request may be cancelled; machine never automatically replays shell commands or other tool calls. The control plane can enforce its own response deadline independently of machine's shell timeout. For long-running work, use short invocations to start a job and inspect progress/result separately, taking care not to repeat side effects. A longer shell timeout does not extend the control-plane response deadline.
