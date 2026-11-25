@@ -17,13 +17,13 @@ type ToolResponse[T any] struct {
  Error string `json:"error,omitempty"`
 }
 type toolFunc[I,O any] func(context.Context,Config,I)(O,error)
-func registerNative[I,O any](server *mcp.Server,start Config,path string,slots chan struct{},name,description string,fn toolFunc[I,O]){
+func registerNative[I,O any](server *mcp.Server,start Config,path string,slots chan struct{},calls *callLogger,name,description string,fn toolFunc[I,O]){
  if !start.enabled(name){return}
  coordinators:=make(chan struct{},cap(slots))
- mcp.AddTool(server,&mcp.Tool{Name:name,Description:description},func(ctx context.Context,_ *mcp.CallToolRequest,in I)(*mcp.CallToolResult,ToolResponse[O],error){
-  var out ToolResponse[O]
+ mcp.AddTool(server,&mcp.Tool{Name:name,Description:description},func(ctx context.Context,_ *mcp.CallToolRequest,in I)(result *mcp.CallToolResult,out ToolResponse[O],err error){
+  finish:=calls.begin(name,in);defer func(){finish(err==nil&&out.Error=="","")}()
   if err:=ctx.Err();err!=nil{return nil,out,err}
-  if name!="batch"{select{case slots<-struct{}{}:defer func(){<-slots}();default:out.Error="tool concurrency limit reached";return &mcp.CallToolResult{},out,nil}}else{select{case coordinators<-struct{}{}:defer func(){<-coordinators}();default:out.Error="batch concurrency limit reached";return &mcp.CallToolResult{},out,nil};ctx=context.WithValue(ctx,batchSlotsKey{},slots)}
+  if name!="batch"{select{case slots<-struct{}{}:defer func(){<-slots}();default:out.Error="tool concurrency limit reached";return &mcp.CallToolResult{},out,nil}}else{select{case coordinators<-struct{}{}:defer func(){<-coordinators}();default:out.Error="batch concurrency limit reached";return &mcp.CallToolResult{},out,nil};ctx=context.WithValue(ctx,batchSlotsKey{},slots);ctx=context.WithValue(ctx,batchLoggerKey{},calls)}
   c,e:=loadConfig(path);if e!=nil{out.Error="invalid configuration";return &mcp.CallToolResult{},out,nil}
   // Registration is fixed until restart; enforce startup allowlist in batches.
   c.Tools=start.Tools
@@ -32,16 +32,16 @@ func registerNative[I,O any](server *mcp.Server,start Config,path string,slots c
   return &mcp.CallToolResult{},out,nil
  })
 }
-func registerNativeTools(server *mcp.Server,c Config,path string,slots chan struct{}){
- registerNative(server,c,path,slots,"file_read","Read an explicit inclusive line range of a UTF-8 file; returns content and SHA-256.",fileRead)
- registerNative(server,c,path,slots,"file_write","Create a UTF-8 file, or explicitly overwrite it. Supports conditional SHA-256.",fileWrite)
- registerNative(server,c,path,slots,"file_edit","Replace an exact unique string or inclusive line range; optional expected SHA-256.",fileEdit)
- registerNative(server,c,path,slots,"file_info","Get metadata for multiple paths.",fileInfo)
- registerNative(server,c,path,slots,"file_search","Search one UTF-8 file using a Go regular expression.",fileSearch)
- registerNative(server,c,path,slots,"file_grep","Search files recursively using a Go regular expression and optional glob filters.",fileGrep)
- registerNative(server,c,path,slots,"file_glob","Find paths matching a glob pattern, including **.",fileGlob)
- registerNative(server,c,path,slots,"directory_list","List directory entries with bounded recursion.",directoryList)
- registerNative(server,c,path,slots,"batch","Run independent read-only native tool operations with bounded parallelism and output.",batch)
+func registerNativeTools(server *mcp.Server,c Config,path string,slots chan struct{},calls *callLogger){
+ registerNative(server,c,path,slots,calls,"file_read","Read an explicit inclusive line range of a UTF-8 file; returns content and SHA-256.",fileRead)
+ registerNative(server,c,path,slots,calls,"file_write","Create a UTF-8 file, or explicitly overwrite it. Supports conditional SHA-256.",fileWrite)
+ registerNative(server,c,path,slots,calls,"file_edit","Replace an exact unique string or inclusive line range; optional expected SHA-256.",fileEdit)
+ registerNative(server,c,path,slots,calls,"file_info","Get metadata for multiple paths.",fileInfo)
+ registerNative(server,c,path,slots,calls,"file_search","Search one UTF-8 file using a Go regular expression.",fileSearch)
+ registerNative(server,c,path,slots,calls,"file_grep","Search files recursively using a Go regular expression and optional glob filters.",fileGrep)
+ registerNative(server,c,path,slots,calls,"file_glob","Find paths matching a glob pattern, including **.",fileGlob)
+ registerNative(server,c,path,slots,calls,"directory_list","List directory entries with bounded recursion.",directoryList)
+ registerNative(server,c,path,slots,calls,"batch","Run independent read-only native tool operations with bounded parallelism and output.",batch)
 }
 type BatchOperation struct{ID string `json:"id"`;Tool string `json:"tool"`;Arguments map[string]any `json:"arguments"`}
 type BatchInput struct{Operations []BatchOperation `json:"operations"`;Parallel bool `json:"parallel,omitempty"`}
@@ -64,6 +64,7 @@ func readOperation(ctx context.Context,c Config,op BatchOperation)(any,error){
  }
 }
 type batchSlotsKey struct{}
+type batchLoggerKey struct{}
 func batch(ctx context.Context,c Config,in BatchInput)(BatchOutput,error){
  out:=BatchOutput{Results:[]BatchResult{}}
  if len(in.Operations)==0||len(in.Operations)>c.Batch.MaxOperations{return out,errors.New("invalid batch size")}
@@ -83,6 +84,7 @@ func batch(ctx context.Context,c Config,in BatchInput)(BatchOutput,error){
   for i:=base;i<end;i++{wg.Add(1);go func(i int){defer wg.Done()
    op:=in.Operations[i]
    r:=BatchResult{ID:op.ID}
+   if logger,ok:=ctx.Value(batchLoggerKey{}).(*callLogger);ok{finish:=logger.begin(op.Tool,op.Arguments);defer func(){finish(r.Error=="", " batch_id="+fmt.Sprintf("%q",op.ID))}()}
    select{case slots<-struct{}{}:
     defer func(){<-slots}()
     limited:=c
@@ -92,7 +94,7 @@ func batch(ctx context.Context,c Config,in BatchInput)(BatchOutput,error){
    case <-ctx.Done():r.Error=ctx.Err().Error()
    }
    b,e:=json.Marshal(r)
-   if e!=nil||len(b)>c.Batch.MaxOutputBytes{b,_=json.Marshal(BatchResult{ID:op.ID,Error:"operation output exceeds batch budget"})}
+   if e!=nil||len(b)>c.Batch.MaxOutputBytes{r.Error="operation output exceeds batch budget";b,_=json.Marshal(BatchResult{ID:op.ID,Error:r.Error})}
    results[i-base]=b
   }(i)}
   wg.Wait()
