@@ -120,3 +120,18 @@ Tool calls use local time `YY-MM HH:MM:SS`, single-letter levels `D/I/W/E`, mini
 ### Forward-compatible configuration
 
 Unknown YAML keys, including nested settings from newer versions, are ignored. At startup machine emits a warning if unknown keys are present, without logging configuration values. Known settings still require valid types and values; malformed YAML, invalid authentication or resource limits, unsafe file permissions and multiple YAML documents remain rejected. During operation, invalid configuration rejects tool calls without stopping the running server. Unknown keys are not an indication that a feature is supported: verify the installed version before relying on a new security setting. Keep configuration updates atomic.
+### Input and output previews
+
+To show parameters and results, enable both options explicitly and restart machine:
+
+```yaml
+logging:
+  level: info
+  tunnel_level: warn
+  log_arguments: true
+  max_argument_bytes: 512
+  log_output: true
+  max_output_bytes: 1024
+```
+
+Both argument and output previews are disabled by default. The startup log reports the effective settings. Output previews contain actual tool result data, including shell stdout/stderr, file contents and errors; they can expose secrets. Enable only in a trusted environment and protect stderr logs. The output limit is independent of tool execution limits and does not alter MCP responses. Large previews are marked truncated; batch operations and aggregate batch results are logged separately.
