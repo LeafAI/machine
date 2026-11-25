@@ -51,8 +51,9 @@ func shellEnvironment(env []string) []string {
  return result
 }
 
-func runTunnel(ctx context.Context,server *mcp.Server,c TunnelConfig)error{
+func runTunnel(ctx context.Context,server *mcp.Server,c TunnelConfig,logging ...LoggingConfig)error{
  cfg,err:=c.sdkConfig();if err!=nil{return err}
+ lc:=defaultLogging();if len(logging)>0{lc=logging[0]};cfg.LogLevel,_=logLevel(lc.TunnelLevel)
  st,ct:=mcp.NewInMemoryTransports()
  serverCtx,cancel:=context.WithCancel(ctx);defer cancel()
  done:=make(chan error,1)
