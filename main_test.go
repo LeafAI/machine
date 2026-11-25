@@ -66,3 +66,27 @@ func TestShellToolResultSuccess(t *testing.T) {
  result,out,err:=shellToolResult(context.Background(),c,Input{Command:"printf ok"})
  if err!=nil||result==nil||result.IsError||out.ExitCode!=0||out.Stdout!="ok"{t.Fatalf("unexpected result: %+v %v",out,err)}
 }
+
+func TestDynamicShellConfig(t *testing.T) {
+ dir:=t.TempDir()
+ p:=filepath.Join(dir,"machine.yaml")
+ a:=filepath.Join(dir,"first")
+ b:=filepath.Join(dir,"second")
+ for _,d:=range []string{a,b}{
+  if err:=os.Mkdir(d,0700);err!=nil{t.Fatal(err)}
+ }
+ if err:=os.WriteFile(filepath.Join(a,"machine-test-command"),[]byte("#!/bin/sh\nprintf first"),0700);err!=nil{t.Fatal(err)}
+ if err:=os.WriteFile(filepath.Join(b,"machine-test-command"),[]byte("#!/bin/sh\nprintf second"),0700);err!=nil{t.Fatal(err)}
+ write:=func(body string){t.Helper();if err:=os.WriteFile(p,[]byte(body),0600);err!=nil{t.Fatal(err)}}
+ for _,v:=range []struct{dir,want string}{{a,"first"},{b,"second"}}{
+  write("auth_required: false\nadditional_paths:\n  - '"+v.dir+"'\n")
+  result,out,err:=shellToolFromConfig(context.Background(),p,Input{Command:"machine-test-command"})
+  if err!=nil||result==nil||result.IsError||out.ExitCode!=0||out.Stdout!=v.want{t.Fatalf("unexpected result: %+v %v",out,err)}
+ }
+ write("auth_required: false\nadditional_paths: [\n")
+ result,out,err:=shellToolFromConfig(context.Background(),p,Input{Command:"printf should-not-run"})
+ if err!=nil||result==nil||result.IsError||out.ExitCode!=-1||out.Error==""||out.Stdout!=""{t.Fatalf("invalid configuration must prevent execution: %+v %v",out,err)}
+ write("auth_required: false\n")
+ _,out,err=shellToolFromConfig(context.Background(),p,Input{Command:"printf recovered"})
+ if err!=nil||out.ExitCode!=0||out.Stdout!="recovered"{t.Fatalf("configuration recovery failed: %+v %v",out,err)}
+}
