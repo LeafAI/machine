@@ -53,3 +53,16 @@ func TestAuthConfig(t *testing.T){
   if (err==nil)!=v.ok||c.AuthRequired!=v.required{t.Fatalf("%q: %+v %v",v.yaml,c,err)}
  }
 }
+
+func TestShellToolResultNonZeroExit(t *testing.T) {
+ c:=Config{Shell:"/bin/sh",TimeoutSeconds:2,MaxOutputBytes:1024}
+ result,out,err:=shellToolResult(context.Background(),c,Input{Command:"printf 'stdout-ok'; printf 'stderr-ok' >&2; exit 7"})
+ if err!=nil||result==nil||result.IsError{t.Fatalf("command exit must not be an MCP error: %v",err)}
+ if out.ExitCode!=7||out.Stdout!="stdout-ok"||out.Stderr!="stderr-ok"||out.TimedOut||out.Truncated{t.Fatalf("unexpected output: %+v",out)}
+}
+
+func TestShellToolResultSuccess(t *testing.T) {
+ c:=Config{Shell:"/bin/sh",TimeoutSeconds:2,MaxOutputBytes:1024}
+ result,out,err:=shellToolResult(context.Background(),c,Input{Command:"printf ok"})
+ if err!=nil||result==nil||result.IsError||out.ExitCode!=0||out.Stdout!="ok"{t.Fatalf("unexpected result: %+v %v",out,err)}
+}
