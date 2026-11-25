@@ -34,7 +34,7 @@ listen: "127.0.0.1:6666"
 auth_required: false
 ```
 
-The api_key field may be omitted. Restart machine and remove the Authorization header from your MCP client configuration. Authentication defaults to enabled if auth_required is omitted. Unauthenticated requests must originate from loopback and use a loopback Host header; browser Origin headers remain rejected. Keep file permissions at 0600.
+The api_key field may be omitted. Restart machine and remove the Authorization header from your MCP client configuration. Authentication defaults to enabled if auth_required is omitted. All local HTTP requests must originate from loopback and use a loopback Host header; browser Origin headers are rejected in both authentication modes. Keep file permissions at 0600.
 
 Any local process can execute arbitrary commands as the server user in this mode. Do not forward or proxy the unauthenticated endpoint, including through SSH tunnels.
 
@@ -65,4 +65,8 @@ Tunnel access grants arbitrary shell execution under the machine user's OS permi
 
 ## Dynamic shell configuration
 
-Before each shell invocation, machine reads and validates ~/.config/machine.yaml. Changes to additional_paths, shell, timeout_seconds and max_output_bytes apply to the next invocation, including tunneled calls. Running commands retain their original settings. Listener, authentication, max_concurrent and tunnel settings require a restart. The entire YAML file must remain valid and private (mode 0600); if reading or validation fails, the command is not executed and a structured error is returned. Correct the file and retry without restarting. Prefer saving via atomic file replacement with private permissions.
+Before each shell invocation, machine reads and validates ~/.config/machine.yaml. Changes to additional_paths, shell, timeout_seconds and max_output_bytes apply to the next invocation, including tunneled calls. Running commands retain their original settings. Listener, authentication, max_concurrent and tunnel settings require a restart. The entire YAML file must remain valid, owned by the server user, a regular non-symlink file, private (mode 0600), at most 1 MiB, and contain exactly one YAML document; if reading or validation fails, the command is not executed and a structured error is returned. Correct the file and retry without restarting. Prefer saving via atomic file replacement with private permissions.
+
+## Shell results and limits
+
+A command failure, timeout, invalid execution configuration or saturated concurrency limit is returned as structured output with exit_code and error, rather than an MCP tool exception. Output limits apply separately to stdout and stderr. Commands run with the server user's permissions; process-group cancellation is best effort and does not contain detached processes. Use an isolated OS account or container if isolation is required. Changes to server startup settings require restarting machine.
