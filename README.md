@@ -23,7 +23,7 @@ machine
 
 Do not overwrite an existing configuration unless you intend to rotate its token.
 Connect a Streamable HTTP MCP client to http://127.0.0.1:6666/mcp with Authorization: Bearer YOUR_TOKEN.
-See machine.example.yaml for optional settings. Only the shell tool is exposed. It accepts command and optional absolute workdir.
+See machine.example.yaml for optional settings. By default only the shell tool is exposed. It accepts command and optional absolute workdir.
 
 ## Disable authentication (trusted local use only)
 
@@ -70,3 +70,28 @@ Before each shell invocation, machine reads and validates ~/.config/machine.yaml
 ## Shell results and limits
 
 A command failure, timeout, invalid execution configuration or saturated concurrency limit is returned as structured output with exit_code and error, rather than an MCP tool exception. Output limits apply separately to stdout and stderr. Commands run with the server user's permissions; process-group cancellation is best effort and does not contain detached processes. Use an isolated OS account or container if isolation is required. Changes to server startup settings require restarting machine.
+
+## Native agent tools (opt-in)
+
+Add these settings to machine.yaml and restart once to register the tools. Choose only the tools you need and replace the workspace paths with existing trusted directories.
+
+```yaml
+tools:
+  enabled: [shell, file_read, file_write, file_edit, file_info, file_search, file_grep, file_glob, directory_list, batch]
+filesystem:
+  default_workdir: ~/workspace
+  allowed_roots: [~/workspace, /tmp]
+  max_read_bytes: 1048576
+  max_write_bytes: 4194304
+  max_search_results: 200
+  respect_gitignore: true
+  follow_symlinks: false
+batch:
+  max_operations: 16
+  max_parallel: 4
+  max_output_bytes: 262144
+```
+
+All native operations return a structured result and optional error. Native tools require explicit allowed roots and use Go os.Root to confine filesystem access. Observed symlinks are rejected; unrestricted shell access, same-user processes, hard links and filesystem mounts are not sandboxed. Filesystem settings and limits are read per invocation. Tool registration and the global concurrency cap require restart. A relative path is resolved against default_workdir. Reads reject oversized or binary files rather than silently truncating them. Writes default to no overwrite, with atomic replacement and optional expected_sha256. Hash checks serialize native writes but cannot guarantee compare-and-swap against external writers. Search uses Go regular expressions, bounded traversal, and a subset of nested gitignore rules (not complete Git semantics). Batch accepts only enabled read-only tools, not shell, writes, edits or nested batches. Results are returned in request order; the output budget may omit trailing results.
+
+Shell now accepts timeout_seconds, max_output_bytes and output_mode (head, tail, head_tail). Limits cannot exceed configured maximums. Output includes duration_ms and optional signal. A head_tail response concatenates the retained beginning and end; truncated indicates omitted bytes.
