@@ -19,14 +19,17 @@ type LoggingConfig struct {
  TunnelLevel string `yaml:"tunnel_level"`
  LogArguments bool `yaml:"log_arguments"`
  MaxArgumentBytes int `yaml:"max_argument_bytes"`
+ LogOutput bool `yaml:"log_output"`
+ MaxOutputBytes int `yaml:"max_output_bytes"`
 }
-func defaultLogging() LoggingConfig{return LoggingConfig{Level:"info",TunnelLevel:"warn",MaxArgumentBytes:512}}
+func defaultLogging() LoggingConfig{return LoggingConfig{Level:"info",TunnelLevel:"warn",MaxArgumentBytes:512,MaxOutputBytes:1024}}
 func logLevel(s string)(slog.Level,error){
  switch s{case "debug":return slog.LevelDebug,nil;case "info":return slog.LevelInfo,nil;case "warn":return slog.LevelWarn,nil;case "error":return slog.LevelError,nil;default:return 0,fmt.Errorf("invalid logging level")}
 }
 func(c LoggingConfig) validate()error{
  if _,e:=logLevel(c.Level);e!=nil{return e};if _,e:=logLevel(c.TunnelLevel);e!=nil{return e}
  if c.MaxArgumentBytes<64||c.MaxArgumentBytes>8192{return fmt.Errorf("invalid logging.max_argument_bytes")}
+ if c.MaxOutputBytes<64||c.MaxOutputBytes>8192{return fmt.Errorf("invalid logging.max_output_bytes")}
  return nil
 }
 var callSequence atomic.Uint64
@@ -90,11 +93,28 @@ func(l *callLogger) arguments(name string,in any)string{
  }
  return " "+summary
 }
-func(l *callLogger) begin(name string,in any)func(bool,string){
+// Output previews are opt-in. Quote untrusted text so each record remains one line.
+func(l *callLogger) output(v any)string{
+ if !l.cfg.LogOutput{return ""}
+ b,e:=json.Marshal(v);if e!=nil{return " output=[unavailable]"}
+ if len(b)<=l.cfg.MaxOutputBytes{return " output="+string(b)}
+ const suffix=" [truncated]"
+ // Bound the escaped preview itself, not just the source bytes.
+ n:=min(len(b),l.cfg.MaxOutputBytes-len(suffix)-2)
+ for n>0{
+  for n>0&&!utf8.RuneStart(b[n]){n--}
+  q:=strconv.Quote(string(b[:n]))
+  if len(q)+len(suffix)<=l.cfg.MaxOutputBytes{return " output="+q+suffix}
+  n--
+ }
+ return " output=[truncated]"
+}
+func(l *callLogger) begin(name string,in any)func(bool,string,...any){
  id:=callSequence.Add(1);start:=time.Now()
  l.line(slog.LevelInfo,"%04d %s >%s",id,safeToolName(name),l.arguments(name,in))
- return func(ok bool,details string){
+ return func(ok bool,details string,output ...any){
   level:=slog.LevelInfo;status:="ok";if !ok{level=slog.LevelWarn;status="error"}
+  if len(output)>0{details+=l.output(output[0])}
   l.line(level,"%04d %s < %s %s%s",id,safeToolName(name),status,time.Since(start).Round(time.Millisecond),details)
  }
 }
