@@ -6,6 +6,7 @@ import (
  "errors"
  "fmt"
  "sync"
+ "bytes"
  "time"
 
  "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -18,9 +19,11 @@ type ToolResponse[T any] struct {
 type toolFunc[I,O any] func(context.Context,Config,I)(O,error)
 func registerNative[I,O any](server *mcp.Server,start Config,path string,slots chan struct{},name,description string,fn toolFunc[I,O]){
  if !start.enabled(name){return}
+ coordinators:=make(chan struct{},cap(slots))
  mcp.AddTool(server,&mcp.Tool{Name:name,Description:description},func(ctx context.Context,_ *mcp.CallToolRequest,in I)(*mcp.CallToolResult,ToolResponse[O],error){
   var out ToolResponse[O]
-  select{case slots<-struct{}{}:defer func(){<-slots}();case <-ctx.Done():return nil,out,ctx.Err();default:out.Error="tool concurrency limit reached";return &mcp.CallToolResult{},out,nil}
+  if err:=ctx.Err();err!=nil{return nil,out,err}
+  if name!="batch"{select{case slots<-struct{}{}:defer func(){<-slots}();default:out.Error="tool concurrency limit reached";return &mcp.CallToolResult{},out,nil}}else{select{case coordinators<-struct{}{}:defer func(){<-coordinators}();default:out.Error="batch concurrency limit reached";return &mcp.CallToolResult{},out,nil};ctx=context.WithValue(ctx,batchSlotsKey{},slots)}
   c,e:=loadConfig(path);if e!=nil{out.Error="invalid configuration";return &mcp.CallToolResult{},out,nil}
   // Registration is fixed until restart; enforce startup allowlist in batches.
   c.Tools=start.Tools
@@ -46,7 +49,7 @@ type BatchResult struct{ID string `json:"id"`;Result any `json:"result,omitempty
 type BatchOutput struct{Results []BatchResult `json:"results"`;Truncated bool `json:"truncated"`}
 func dispatch[I,O any](ctx context.Context,c Config,args map[string]any,fn toolFunc[I,O])(any,error){
  b,e:=json.Marshal(args);if e!=nil{return nil,e};var in I
- if e=json.Unmarshal(b,&in);e!=nil{return nil,e};return fn(ctx,c,in)
+ d:=json.NewDecoder(bytes.NewReader(b));d.DisallowUnknownFields();if e=d.Decode(&in);e!=nil{return nil,e};return fn(ctx,c,in)
 }
 func readOperation(ctx context.Context,c Config,op BatchOperation)(any,error){
  if !c.enabled(op.Tool){return nil,errors.New("tool not enabled")}
@@ -60,17 +63,45 @@ func readOperation(ctx context.Context,c Config,op BatchOperation)(any,error){
  default:return nil,errors.New("batch permits read-only operations only")
  }
 }
+type batchSlotsKey struct{}
 func batch(ctx context.Context,c Config,in BatchInput)(BatchOutput,error){
  out:=BatchOutput{Results:[]BatchResult{}}
  if len(in.Operations)==0||len(in.Operations)>c.Batch.MaxOperations{return out,errors.New("invalid batch size")}
  ids:=map[string]bool{}
  for _,op:=range in.Operations{if op.ID==""||len(op.ID)>128||ids[op.ID]{return out,errors.New("batch IDs must be nonempty and unique")};ids[op.ID]=true}
- workers:=1;if in.Parallel{workers=min(c.Batch.MaxParallel,len(in.Operations))}
- results:=make([]BatchResult,len(in.Operations));var wg sync.WaitGroup
- jobs:=make(chan int)
- for i:=0;i<workers;i++{wg.Add(1);go func(){defer wg.Done();for n:=range jobs{op:=in.Operations[n];v,e:=readOperation(ctx,c,op);r:=BatchResult{ID:op.ID,Result:v};if e!=nil{r.Error=e.Error()};results[n]=r}}()}
- for i:=range in.Operations{jobs<-i};close(jobs);wg.Wait()
+ slots,_:=ctx.Value(batchSlotsKey{}).(chan struct{})
+ if slots==nil{slots=make(chan struct{},maxInt(1,c.Batch.MaxParallel))}
+ workers:=1;if in.Parallel{workers=min(c.Batch.MaxParallel,len(in.Operations),cap(slots))}
+ // Process one bounded window at a time. Each operation holds a shared slot;
+ // the coordinator itself never holds one, avoiding nested semaphore deadlocks.
  used:=64
- for _,r:=range results{b,e:=json.Marshal(r);if e!=nil{return out,fmt.Errorf("encode batch result: %w",e)};if used+len(b)+1>c.Batch.MaxOutputBytes{out.Truncated=true;break};used+=len(b)+1;out.Results=append(out.Results,r)}
+ for base:=0;base<len(in.Operations);base+=workers{
+  if e:=ctx.Err();e!=nil{return out,e}
+  end:=min(base+workers,len(in.Operations))
+  results:=make([]json.RawMessage,end-base)
+  var wg sync.WaitGroup
+  for i:=base;i<end;i++{wg.Add(1);go func(i int){defer wg.Done()
+   op:=in.Operations[i]
+   r:=BatchResult{ID:op.ID}
+   select{case slots<-struct{}{}:
+    defer func(){<-slots}()
+    limited:=c
+    limited.Filesystem.MaxReadBytes=min(c.Filesystem.MaxReadBytes,c.Batch.MaxOutputBytes)
+    limited.Filesystem.MaxSearchResults=min(c.Filesystem.MaxSearchResults,maxInt(1,c.Batch.MaxOutputBytes/256))
+    v,e:=readOperation(ctx,limited,op);r.Result=v;if e!=nil{r.Error=e.Error()}
+   case <-ctx.Done():r.Error=ctx.Err().Error()
+   }
+   b,e:=json.Marshal(r)
+   if e!=nil||len(b)>c.Batch.MaxOutputBytes{b,_=json.Marshal(BatchResult{ID:op.ID,Error:"operation output exceeds batch budget"})}
+   results[i-base]=b
+  }(i)}
+  wg.Wait()
+  for _,b:=range results{
+   if used+len(b)+1>c.Batch.MaxOutputBytes{out.Truncated=true;return out,nil}
+   var r BatchResult
+   if e:=json.Unmarshal(b,&r);e!=nil{return out,fmt.Errorf("decode batch result: %w",e)}
+   used+=len(b)+1;out.Results=append(out.Results,r)
+  }
+ }
  return out,nil
 }
