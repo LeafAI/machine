@@ -21,7 +21,7 @@ func registerNative[I,O any](server *mcp.Server,start Config,path string,slots c
  if !start.enabled(name){return}
  coordinators:=make(chan struct{},cap(slots))
  mcp.AddTool(server,&mcp.Tool{Name:name,Description:description},func(ctx context.Context,_ *mcp.CallToolRequest,in I)(result *mcp.CallToolResult,out ToolResponse[O],err error){
-  finish:=calls.begin(name,in);defer func(){finish(err==nil&&out.Error=="","")}()
+  finish:=calls.begin(name,in);defer func(){finish(err==nil&&out.Error=="","",out)}()
   if err:=ctx.Err();err!=nil{return nil,out,err}
   if name!="batch"{select{case slots<-struct{}{}:defer func(){<-slots}();default:out.Error="tool concurrency limit reached";return &mcp.CallToolResult{},out,nil}}else{select{case coordinators<-struct{}{}:defer func(){<-coordinators}();default:out.Error="batch concurrency limit reached";return &mcp.CallToolResult{},out,nil};ctx=context.WithValue(ctx,batchSlotsKey{},slots);ctx=context.WithValue(ctx,batchLoggerKey{},calls)}
   c,e:=loadConfig(path);if e!=nil{out.Error="invalid configuration";return &mcp.CallToolResult{},out,nil}
@@ -84,7 +84,7 @@ func batch(ctx context.Context,c Config,in BatchInput)(BatchOutput,error){
   for i:=base;i<end;i++{wg.Add(1);go func(i int){defer wg.Done()
    op:=in.Operations[i]
    r:=BatchResult{ID:op.ID}
-   if logger,ok:=ctx.Value(batchLoggerKey{}).(*callLogger);ok{finish:=logger.begin(op.Tool,op.Arguments);defer func(){finish(r.Error=="", " batch_id="+fmt.Sprintf("%q",op.ID))}()}
+   if logger,ok:=ctx.Value(batchLoggerKey{}).(*callLogger);ok{finish:=logger.begin(op.Tool,op.Arguments);defer func(){finish(r.Error=="", " batch_id="+fmt.Sprintf("%q",op.ID),r)}()}
    select{case slots<-struct{}{}:
     defer func(){<-slots}()
     limited:=c

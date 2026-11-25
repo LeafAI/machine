@@ -39,3 +39,6 @@ tunnel:
 #   tunnel_level: warn
 #   log_arguments: true
 #   max_argument_bytes: 512
+
+#   log_output: false
+#   max_output_bytes: 1024
