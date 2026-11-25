@@ -95,3 +95,15 @@ batch:
 All native operations return a structured result and optional error. Native tools require explicit allowed roots and use Go os.Root to confine filesystem access. Observed symlinks are rejected; unrestricted shell access, same-user processes, hard links and filesystem mounts are not sandboxed. Filesystem settings and limits are read per invocation. Tool registration and the global concurrency cap require restart. A relative path is resolved against default_workdir. Reads reject oversized or binary files rather than silently truncating them. Writes default to no overwrite, with atomic replacement and optional expected_sha256. Hash checks serialize native writes but cannot guarantee compare-and-swap against external writers. Search uses Go regular expressions, bounded traversal, and a subset of nested gitignore rules (not complete Git semantics). Batch accepts only enabled read-only tools, not shell, writes, edits or nested batches. Results are returned in request order; the output budget may omit trailing results.
 
 Shell now accepts timeout_seconds, max_output_bytes and output_mode (head, tail, head_tail). Limits cannot exceed configured maximums. Output includes duration_ms and optional signal. A head_tail response concatenates the retained beginning and end; truncated indicates omitted bytes.
+
+## Tool call logging
+
+Compact start and completion lines include tool name, call ID, elapsed time and status; shell includes exit status, output sizes, timeout and truncation. Batch operations have individual lines. All logs go to stderr. The default tunnel log level is warn; use info or debug for troubleshooting. Parameters are opt-in because commands, paths and search patterns may contain secrets. File bodies and edit text are always redacted, and argument output is capped. Logs do not include tool output or raw error messages. Settings require restart.
+
+```yaml
+logging:
+  level: info
+  tunnel_level: warn
+  log_arguments: true
+  max_argument_bytes: 512
+```
