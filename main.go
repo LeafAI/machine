@@ -121,16 +121,23 @@ func shellToolResult(ctx context.Context,c Config,in Input)(*mcp.CallToolResult,
  // Keep exit status, stderr and timeout information available to the caller.
  return &mcp.CallToolResult{},out,nil
 }
+// Read a fresh validated configuration for each invocation. No shared mutable config.
+func shellToolFromConfig(ctx context.Context,path string,in Input)(*mcp.CallToolResult,Output,error){
+ c,err:=loadConfig(path)
+ if err!=nil{return &mcp.CallToolResult{},Output{ExitCode:-1,Error:"cannot load shell configuration: check YAML syntax, settings and file permissions"},nil}
+ return shellToolResult(ctx,c,in)
+}
 func main(){
  if len(os.Args)==2 && (os.Args[1]=="--help"||os.Args[1]=="-h"){fmt.Println("machine: authenticated MCP shell server\nConfiguration: $HOME/.config/machine.yaml");return}
  home,e:=os.UserHomeDir();if e!=nil{log.Fatal(e)}
- c,e:=loadConfig(filepath.Join(home,".config","machine.yaml"));if e!=nil{log.Fatal(e)}
+ configPath:=filepath.Join(home,".config","machine.yaml")
+ c,e:=loadConfig(configPath);if e!=nil{log.Fatal(e)}
  if e=c.Tunnel.validate();e!=nil{log.Fatal(e)}
  server:=mcp.NewServer(&mcp.Implementation{Name:"machine",Version:"0.1.0"},nil)
  slots:=make(chan struct{},c.MaxConcurrent)
  mcp.AddTool(server,&mcp.Tool{Name:"shell",Description:"Execute an arbitrary non-interactive shell command with the server user's permissions. May change files and system state."},func(ctx context.Context,_ *mcp.CallToolRequest,in Input)(*mcp.CallToolResult,Output,error){
   select{case slots<-struct{}{}:defer func(){<-slots}();case <-ctx.Done():return nil,Output{},ctx.Err();default:return nil,Output{},fmt.Errorf("shell concurrency limit reached")}
-  return shellToolResult(ctx,c,in)
+  return shellToolFromConfig(ctx,configPath,in)
  })
  handler:=mcp.NewStreamableHTTPHandler(func(*http.Request)*mcp.Server{return server},&mcp.StreamableHTTPOptions{Stateless:true})
  mux:=http.NewServeMux();mux.Handle("/mcp",protectWithAuth(c.AuthRequired,c.APIKey,handler))
