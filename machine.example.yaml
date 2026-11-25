@@ -9,3 +9,9 @@ additional_paths:
 timeout_seconds: 300
 max_output_bytes: 1048576
 max_concurrent: 4
+
+# Optional OpenAI Secure MCP Tunnel. Runtime key comes from CONTROL_PLANE_API_KEY.
+tunnel:
+  enabled: false
+  # id: tunnel_REPLACE_WITH_REAL_ID
+  # organization_id: org-...
