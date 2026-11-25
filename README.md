@@ -107,3 +107,12 @@ logging:
   log_arguments: true
   max_argument_bytes: 512
 ```
+
+### Compact log layout
+
+Tool calls use local time `YY-MM HH:MM:SS`, single-letter levels `D/I/W/E`, minimum four-digit sequence numbers and `>` / `<` for start / completion. With `log_arguments: true`, tool-specific key/value summaries show paths, commands, ranges and search patterns; file bodies and replacement strings are represented by byte counts. Free-form arguments may still contain secrets. Example:
+
+```text
+26-11 14:20:01 I 0001 file_read > path="main.go" lines=1-80
+26-11 14:20:01 I 0001 file_read < ok 3ms
+```
