@@ -7,6 +7,9 @@ import (
  "crypto/subtle"
  "errors"
  "fmt"
+ "io"
+ "strconv"
+ "unicode"
  "log"
  "net"
  "net/http"
@@ -36,13 +39,17 @@ type Config struct {
 
 func loadConfig(path string) (Config,error) {
  c:=Config{AuthRequired:true,Listen:"127.0.0.1:6666",Shell:"/bin/sh",TimeoutSeconds:300,MaxOutputBytes:1048576,MaxConcurrent:4}
- f,e:=os.Open(path); if e!=nil{return c,e}; defer f.Close()
+ f,e:=os.OpenFile(path,os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW,0); if e!=nil{return c,e}; defer f.Close()
  st,e:=f.Stat(); if e!=nil{return c,e}
- if !st.Mode().IsRegular() || st.Mode().Perm()&0077!=0{return c,errors.New("configuration must be a regular private file (chmod 600)")}
- d:=yaml.NewDecoder(f);d.KnownFields(true)
- if e=d.Decode(&c);e!=nil{return c,e}
- if c.AuthRequired && (len(c.APIKey)<32 || strings.ContainsAny(c.APIKey," \t\r\n")){return c,errors.New("api_key must contain at least 32 non-whitespace characters")}
- host,_,e:=net.SplitHostPort(c.Listen);if e!=nil{return c,e}
+ if !st.Mode().IsRegular() || st.Mode().Perm()&0077!=0 || st.Size()>1<<20{return c,errors.New("configuration must be a regular private file (chmod 600)")}
+ if owner,ok:=st.Sys().(*syscall.Stat_t);!ok||owner.Uid!=uint32(os.Geteuid()){return c,errors.New("configuration must be owned by the server user")}
+ d:=yaml.NewDecoder(io.LimitReader(f,1<<20));d.KnownFields(true)
+ if e=d.Decode(&c);e!=nil{return c,errors.New("invalid configuration YAML")}
+ var extra any
+ if e=d.Decode(&extra);e!=io.EOF{return c,errors.New("configuration must contain exactly one YAML document")}
+ if c.AuthRequired && (len(c.APIKey)<32 || strings.IndexFunc(c.APIKey,func(r rune)bool{return unicode.IsSpace(r)||unicode.IsControl(r)})>=0){return c,errors.New("api_key must contain at least 32 non-whitespace characters")}
+ host,port,e:=net.SplitHostPort(c.Listen);if e!=nil{return c,errors.New("invalid listen address")}
+ n,e:=strconv.Atoi(port);if e!=nil||n<1||n>65535{return c,errors.New("invalid listen port")}
  ip:=net.ParseIP(host);if ip==nil || !ip.IsLoopback(){return c,errors.New("listen must be a loopback IP; use a secure tunnel")}
  if !filepath.IsAbs(c.Shell)||c.TimeoutSeconds<1||c.TimeoutSeconds>86400||c.MaxOutputBytes<1||c.MaxOutputBytes>16777216||c.MaxConcurrent<1||c.MaxConcurrent>128{return c,errors.New("invalid shell or resource limits")}
  for i,p:=range c.AdditionalPaths {
@@ -80,7 +87,7 @@ func run(ctx context.Context,c Config,in Input)Output{
  cmd:=exec.CommandContext(ctx,c.Shell,"-c",in.Command);cmd.Dir=in.Workdir
  paths:=append([]string{},c.AdditionalPaths...)
  if p:=os.Getenv("PATH");p!=""{paths=append(paths,p)}
- cmd.Env=append(shellEnvironment(os.Environ()),"PATH="+strings.Join(paths,string(os.PathListSeparator)))
+ cmd.Env=append(shellEnvironment(cmd.Environ()),"PATH="+strings.Join(paths,string(os.PathListSeparator)))
  cmd.SysProcAttr=&syscall.SysProcAttr{Setpgid:true}
  cmd.Cancel=func()error{e:=syscall.Kill(-cmd.Process.Pid,syscall.SIGKILL);if errors.Is(e,syscall.ESRCH){return os.ErrProcessDone};return e}
  cmd.WaitDelay=2*time.Second
@@ -100,7 +107,7 @@ func protectWithAuth(required bool,key string,next http.Handler)http.Handler{
  expected:=sha256.Sum256([]byte("Bearer "+key))
  return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
   if len(r.Header.Values("Origin"))!=0{http.Error(w,"origin forbidden",http.StatusForbidden);return}
-  if !required {
+  {
    host,_,err:=net.SplitHostPort(r.RemoteAddr);ip:=net.ParseIP(host)
    if err!=nil||ip==nil||!ip.IsLoopback(){http.Error(w,"loopback clients only",http.StatusForbidden);return}
    host=r.Host
@@ -127,28 +134,59 @@ func shellToolFromConfig(ctx context.Context,path string,in Input)(*mcp.CallTool
  if err!=nil{return &mcp.CallToolResult{},Output{ExitCode:-1,Error:"cannot load shell configuration: check YAML syntax, settings and file permissions"},nil}
  return shellToolResult(ctx,c,in)
 }
+func newMachineServer(c Config,configPath string)*mcp.Server{
+ server:=mcp.NewServer(&mcp.Implementation{Name:"machine",Version:"0.1.0"},nil)
+ slots:=make(chan struct{},c.MaxConcurrent)
+ mcp.AddTool(server,&mcp.Tool{Name:"shell",Description:"Execute an arbitrary non-interactive shell command with the server user permissions. May change files and system state."},func(ctx context.Context,_ *mcp.CallToolRequest,in Input)(*mcp.CallToolResult,Output,error){
+  if err:=ctx.Err();err!=nil{return nil,Output{},err}
+  select{case slots<-struct{}{}:defer func(){<-slots}();default:return &mcp.CallToolResult{},Output{ExitCode:-1,Error:"shell concurrency limit reached"},nil}
+  return shellToolFromConfig(ctx,configPath,in)
+ })
+ return server
+}
 func main(){
  if len(os.Args)==2 && (os.Args[1]=="--help"||os.Args[1]=="-h"){fmt.Println("machine: authenticated MCP shell server\nConfiguration: $HOME/.config/machine.yaml");return}
  home,e:=os.UserHomeDir();if e!=nil{log.Fatal(e)}
  configPath:=filepath.Join(home,".config","machine.yaml")
  c,e:=loadConfig(configPath);if e!=nil{log.Fatal(e)}
  if e=c.Tunnel.validate();e!=nil{log.Fatal(e)}
- server:=mcp.NewServer(&mcp.Implementation{Name:"machine",Version:"0.1.0"},nil)
- slots:=make(chan struct{},c.MaxConcurrent)
- mcp.AddTool(server,&mcp.Tool{Name:"shell",Description:"Execute an arbitrary non-interactive shell command with the server user's permissions. May change files and system state."},func(ctx context.Context,_ *mcp.CallToolRequest,in Input)(*mcp.CallToolResult,Output,error){
-  select{case slots<-struct{}{}:defer func(){<-slots}();case <-ctx.Done():return nil,Output{},ctx.Err();default:return nil,Output{},fmt.Errorf("shell concurrency limit reached")}
-  return shellToolFromConfig(ctx,configPath,in)
- })
+ server:=newMachineServer(c,configPath)
  handler:=mcp.NewStreamableHTTPHandler(func(*http.Request)*mcp.Server{return server},&mcp.StreamableHTTPOptions{Stateless:true})
  mux:=http.NewServeMux();mux.Handle("/mcp",protectWithAuth(c.AuthRequired,c.APIKey,handler))
  srv:=&http.Server{Addr:c.Listen,Handler:mux,ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,IdleTimeout:60*time.Second,MaxHeaderBytes:16384}
- ctx,stop:=signal.NotifyContext(context.Background(),os.Interrupt,syscall.SIGTERM);defer stop()
- if c.Tunnel.Enabled {
-  go func(){if err:=runTunnel(ctx,server,c.Tunnel);err!=nil&&ctx.Err()==nil{log.Print("OpenAI tunnel stopped; shutting down machine");stop()}}()
- }
- srv.BaseContext=func(net.Listener)context.Context{return ctx}
- go func(){<-ctx.Done();shutdown,cancel:=context.WithTimeout(context.Background(),5*time.Second);defer cancel();_=srv.Shutdown(shutdown)}()
  if !c.AuthRequired{log.Print("WARNING: authentication disabled; local clients have shell access")}
- log.Printf("machine listening on http://%s/mcp",c.Listen)
- if e=srv.ListenAndServe();e!=nil&&!errors.Is(e,http.ErrServerClosed){log.Fatal(e)}
+ if e=serveMachine(srv,server,c.Tunnel);e!=nil{log.Fatal(e)}
+}
+
+func serveMachine(srv *http.Server,server *mcp.Server,tunnel TunnelConfig)error{
+ listener,err:=net.Listen("tcp",srv.Addr)
+ if err!=nil{return err}
+ defer listener.Close()
+ ctx,stop:=signal.NotifyContext(context.Background(),os.Interrupt,syscall.SIGTERM);defer stop()
+ srv.BaseContext=func(net.Listener)context.Context{return ctx}
+ httpDone:=make(chan error,1)
+ go func(){httpDone<-srv.Serve(listener)}()
+ var tunnelDone chan error
+ if tunnel.Enabled{
+  tunnelDone=make(chan error,1)
+  go func(){tunnelDone<-runTunnel(ctx,server,tunnel)}()
+ }
+ log.Printf("machine listening on http://%s/mcp",listener.Addr())
+ var failure error
+ select{
+ case <-ctx.Done():
+ case err:=<-httpDone:
+  httpDone=nil
+  if !errors.Is(err,http.ErrServerClosed){failure=err}
+ case <-tunnelDone:
+  tunnelDone=nil
+  if ctx.Err()==nil{failure=errors.New("OpenAI tunnel stopped unexpectedly")}
+ }
+ stop()
+ shutdown,cancel:=context.WithTimeout(context.Background(),8*time.Second);defer cancel()
+ if err:=srv.Shutdown(shutdown);err!=nil{_=srv.Close();if failure==nil{failure=err}}
+ if tunnelDone!=nil{
+  select{case <-tunnelDone:case <-shutdown.Done():if failure==nil{failure=shutdown.Err()}}
+ }
+ return failure
 }
