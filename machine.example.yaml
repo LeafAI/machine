@@ -32,3 +32,10 @@ tunnel:
 #   max_operations: 16
 #   max_parallel: 4
 #   max_output_bytes: 262144
+
+# Compact tool logging (arguments may contain secrets; opt in deliberately).
+# logging:
+#   level: info
+#   tunnel_level: warn
+#   log_arguments: true
+#   max_argument_bytes: 512
