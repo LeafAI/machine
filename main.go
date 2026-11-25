@@ -68,6 +68,9 @@ func loadConfig(path string) (Config,error) {
 type Input struct {
  Command string `json:"command" jsonschema:"Shell command to execute"`
  Workdir string `json:"workdir,omitempty" jsonschema:"Optional absolute working directory"`
+ TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+ MaxOutputBytes int `json:"max_output_bytes,omitempty"`
+ OutputMode string `json:"output_mode,omitempty"`
 }
 type Output struct {
  Stdout string `json:"stdout"`
@@ -76,15 +79,29 @@ type Output struct {
  TimedOut bool `json:"timed_out"`
  Truncated bool `json:"truncated"`
  Error string `json:"error,omitempty"`
+ DurationMS int64 `json:"duration_ms"`
+ Signal string `json:"signal,omitempty"`
 }
-type capped struct{b bytes.Buffer;limit int;truncated bool}
+type capped struct{b bytes.Buffer;limit int;truncated bool; mode string; tail []byte}
 func(w *capped)Write(p []byte)(int,error){
- n:=len(p);remaining:=w.limit-w.b.Len()
+ n:=len(p)
+ if w.mode=="tail"||w.mode=="head_tail"{
+  head:=0;if w.mode=="head_tail"{head=w.limit/2};tailLimit:=w.limit-head
+  if remain:=head-w.b.Len();remain>0{take:=min(remain,len(p));_,_=w.b.Write(p[:take]);p=p[take:]}
+  if len(p)>=tailLimit{if len(w.tail)+len(p)>tailLimit{w.truncated=true};w.tail=append(w.tail[:0],p[len(p)-tailLimit:]...)}else{if excess:=len(w.tail)+len(p)-tailLimit;excess>0{w.truncated=true;copy(w.tail,w.tail[excess:]);w.tail=w.tail[:len(w.tail)-excess]};w.tail=append(w.tail,p...)}
+  return n,nil
+ }
+ remaining:=w.limit-w.b.Len()
  if n>remaining{w.truncated=true;p=p[:remaining]}
  _,_=w.b.Write(p);return n,nil
 }
-func run(ctx context.Context,c Config,in Input)Output{
- out:=Output{ExitCode:-1}
+func(w *capped) String()string{return w.b.String()+string(w.tail)}
+func run(ctx context.Context,c Config,in Input)(out Output){
+ start:=time.Now();defer func(){out.DurationMS=time.Since(start).Milliseconds()}()
+ out=Output{ExitCode:-1}
+ if in.TimeoutSeconds<0||in.TimeoutSeconds>c.TimeoutSeconds||in.MaxOutputBytes<0||in.MaxOutputBytes>c.MaxOutputBytes{out.Error="requested limits exceed configured maximums";return out}
+ if in.TimeoutSeconds>0{c.TimeoutSeconds=in.TimeoutSeconds};if in.MaxOutputBytes>0{c.MaxOutputBytes=in.MaxOutputBytes}
+ if in.OutputMode!=""&&in.OutputMode!="head"&&in.OutputMode!="tail"&&in.OutputMode!="head_tail"{out.Error="invalid output_mode";return out}
  if strings.TrimSpace(in.Command)==""{out.Error="command is empty";return out}
  if in.Workdir!=""&&!filepath.IsAbs(in.Workdir){out.Error="workdir must be absolute";return out}
  ctx,cancel:=context.WithTimeout(ctx,time.Duration(c.TimeoutSeconds)*time.Second);defer cancel()
@@ -95,12 +112,12 @@ func run(ctx context.Context,c Config,in Input)Output{
  cmd.SysProcAttr=&syscall.SysProcAttr{Setpgid:true}
  cmd.Cancel=func()error{e:=syscall.Kill(-cmd.Process.Pid,syscall.SIGKILL);if errors.Is(e,syscall.ESRCH){return os.ErrProcessDone};return e}
  cmd.WaitDelay=2*time.Second
- stdout,stderr:=&capped{limit:c.MaxOutputBytes},&capped{limit:c.MaxOutputBytes}
+ stdout,stderr:=&capped{limit:c.MaxOutputBytes,mode:in.OutputMode},&capped{limit:c.MaxOutputBytes,mode:in.OutputMode}
  cmd.Stdout=stdout;cmd.Stderr=stderr
  e:=cmd.Run()
- out.Stdout=stdout.b.String();out.Stderr=stderr.b.String();out.Truncated=stdout.truncated||stderr.truncated
+ out.Stdout=stdout.String();out.Stderr=stderr.String();out.Truncated=stdout.truncated||stderr.truncated
  out.TimedOut=errors.Is(ctx.Err(),context.DeadlineExceeded)
- if cmd.ProcessState!=nil{out.ExitCode=cmd.ProcessState.ExitCode()}
+ if cmd.ProcessState!=nil{out.ExitCode=cmd.ProcessState.ExitCode();if status,ok:=cmd.ProcessState.Sys().(syscall.WaitStatus);ok&&status.Signaled(){out.Signal=status.Signal().String()}}
  if e!=nil{out.Error=e.Error()};if ctx.Err()!=nil{out.Error=ctx.Err().Error()}
  return out
 }
