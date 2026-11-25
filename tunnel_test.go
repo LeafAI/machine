@@ -13,9 +13,12 @@ func TestTunnelConfig(t *testing.T){
  if c.validate()==nil{t.Fatal("missing tunnel ID accepted")}
  t.Setenv("CONTROL_PLANE_TUNNEL_ID","tunnel_0123456789abcdef0123456789abcdef")
  if c.validate()==nil{t.Fatal("missing runtime key accepted")}
+ c.APIKey="yaml-runtime-key"
+ yamlCfg,err:=c.sdkConfig()
+ if err!=nil||yamlCfg.APIKey!="yaml-runtime-key"{t.Fatal("YAML runtime key not accepted")}
  t.Setenv("CONTROL_PLANE_API_KEY","test-runtime-key")
  cfg,err:=c.sdkConfig()
- if err!=nil||cfg.TunnelID!="tunnel_0123456789abcdef0123456789abcdef"{t.Fatalf("invalid config: %v",err)}
+ if err!=nil||cfg.APIKey!="test-runtime-key"||cfg.TunnelID!="tunnel_0123456789abcdef0123456789abcdef"{t.Fatalf("invalid config: %v",err)}
  c.ID="invalid"
  if c.validate()==nil{t.Fatal("invalid ID accepted")}
 }
