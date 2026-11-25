@@ -16,3 +16,19 @@ tunnel:
   # id: tunnel_REPLACE_WITH_REAL_ID
   # api_key: "sk-REPLACE_WITH_RUNTIME_KEY"
   # organization_id: org-...
+
+# Optional native tools; uncomment and customize to enable.
+# tools:
+#   enabled: [shell, file_read, file_write, file_edit, file_info, file_search, file_grep, file_glob, directory_list, batch]
+# filesystem:
+#   default_workdir: ~/workspace
+#   allowed_roots: [~/workspace, /tmp]
+#   max_read_bytes: 1048576
+#   max_write_bytes: 4194304
+#   max_search_results: 200
+#   respect_gitignore: true
+#   follow_symlinks: false
+# batch:
+#   max_operations: 16
+#   max_parallel: 4
+#   max_output_bytes: 262144
