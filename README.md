@@ -4,7 +4,7 @@ Authenticated shell MCP server for Linux and macOS.
 
 ## Install
 
-With Go 1.25 or later (automatic toolchain upgrades enabled):
+With Go 1.27 or later (automatic toolchain upgrades enabled):
 
 ```sh
 go install github.com/LeafAI/machine@latest
@@ -43,3 +43,22 @@ Any local process can execute arbitrary commands as the server user in this mode
 The API token grants arbitrary shell execution as the server user. Use a dedicated unprivileged account and a secure SSH tunnel for remote access. Limits are not a sandbox. Never retry a command automatically after an ambiguous network failure.
 
 MIT license.
+
+## OpenAI Secure MCP Tunnel
+
+Optional, disabled by default. Uses the official embedded Go SDK (v0.0.21) with an in-memory MCP transport, not a public listener. The existing HTTP listener and its authentication settings are unchanged. Tunnel access is independently governed by OpenAI tunnel access controls, not the local API key.
+
+1. Provision a tunnel at https://platform.openai.com/settings/organization/tunnels and obtain a runtime API key with Tunnels Read + Use permissions (not an admin key).
+2. Add to machine.yaml:
+
+```yaml
+tunnel:
+  enabled: true
+  id: tunnel_REPLACE_WITH_REAL_ID
+  api_key: "sk-REPLACE_WITH_RUNTIME_KEY"
+```
+
+3. Run machine. The runtime key can be stored in tunnel.api_key or supplied via CONTROL_PLANE_API_KEY (a nonempty environment value takes precedence). Keep machine.yaml at mode 0600 and never commit real credentials. The ID may instead be supplied via CONTROL_PLANE_TUNNEL_ID. Optional organization_id or CONTROL_PLANE_ORGANIZATION_ID selects the organization. Wait for the tunnel ready log.
+4. In ChatGPT's app/connector settings, configure the provisioned Secure MCP Tunnel if supported by your account. See https://github.com/openai/tunnel-client/blob/v0.0.21/docs/onboarding.md.
+
+Tunnel access grants arbitrary shell execution under the machine user's OS permissions. Restrict tunnel access to trusted principals, use a dedicated unprivileged account, and do not store unrelated secrets in that account. Removing runtime credentials from subprocess environments is defense in depth only, not isolation. Stop machine to disconnect. If the runtime stops unexpectedly or fails readiness within two minutes, machine shuts down.

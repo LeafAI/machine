@@ -26,6 +26,7 @@ type Config struct {
  Listen string `yaml:"listen"`
  APIKey string `yaml:"api_key"`
  AuthRequired bool `yaml:"auth_required"`
+ Tunnel TunnelConfig `yaml:"tunnel"`
  Shell string `yaml:"shell"`
  AdditionalPaths []string `yaml:"additional_paths"`
  TimeoutSeconds int `yaml:"timeout_seconds"`
@@ -79,7 +80,7 @@ func run(ctx context.Context,c Config,in Input)Output{
  cmd:=exec.CommandContext(ctx,c.Shell,"-c",in.Command);cmd.Dir=in.Workdir
  paths:=append([]string{},c.AdditionalPaths...)
  if p:=os.Getenv("PATH");p!=""{paths=append(paths,p)}
- cmd.Env=append(os.Environ(),"PATH="+strings.Join(paths,string(os.PathListSeparator)))
+ cmd.Env=append(shellEnvironment(os.Environ()),"PATH="+strings.Join(paths,string(os.PathListSeparator)))
  cmd.SysProcAttr=&syscall.SysProcAttr{Setpgid:true}
  cmd.Cancel=func()error{e:=syscall.Kill(-cmd.Process.Pid,syscall.SIGKILL);if errors.Is(e,syscall.ESRCH){return os.ErrProcessDone};return e}
  cmd.WaitDelay=2*time.Second
@@ -118,6 +119,7 @@ func main(){
  if len(os.Args)==2 && (os.Args[1]=="--help"||os.Args[1]=="-h"){fmt.Println("machine: authenticated MCP shell server\nConfiguration: $HOME/.config/machine.yaml");return}
  home,e:=os.UserHomeDir();if e!=nil{log.Fatal(e)}
  c,e:=loadConfig(filepath.Join(home,".config","machine.yaml"));if e!=nil{log.Fatal(e)}
+ if e=c.Tunnel.validate();e!=nil{log.Fatal(e)}
  server:=mcp.NewServer(&mcp.Implementation{Name:"machine",Version:"0.1.0"},nil)
  slots:=make(chan struct{},c.MaxConcurrent)
  mcp.AddTool(server,&mcp.Tool{Name:"shell",Description:"Execute an arbitrary non-interactive shell command with the server user's permissions. May change files and system state."},func(ctx context.Context,_ *mcp.CallToolRequest,in Input)(*mcp.CallToolResult,Output,error){
@@ -128,6 +130,9 @@ func main(){
  mux:=http.NewServeMux();mux.Handle("/mcp",protectWithAuth(c.AuthRequired,c.APIKey,handler))
  srv:=&http.Server{Addr:c.Listen,Handler:mux,ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,IdleTimeout:60*time.Second,MaxHeaderBytes:16384}
  ctx,stop:=signal.NotifyContext(context.Background(),os.Interrupt,syscall.SIGTERM);defer stop()
+ if c.Tunnel.Enabled {
+  go func(){if err:=runTunnel(ctx,server,c.Tunnel);err!=nil&&ctx.Err()==nil{log.Print("OpenAI tunnel stopped; shutting down machine");stop()}}()
+ }
  srv.BaseContext=func(net.Listener)context.Context{return ctx}
  go func(){<-ctx.Done();shutdown,cancel:=context.WithTimeout(context.Background(),5*time.Second);defer cancel();_=srv.Shutdown(shutdown)}()
  if !c.AuthRequired{log.Print("WARNING: authentication disabled; local clients have shell access")}
