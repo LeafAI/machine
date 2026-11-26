@@ -12,7 +12,7 @@ import (
  "unicode/utf8"
  "sync/atomic"
  "time"
- "golang.org/x/term"
+
 )
 
 type LoggingConfig struct {
@@ -42,7 +42,7 @@ func useLogColor(mode string,w io.Writer)bool{
  switch mode{case "always":return true;case "never":return false}
  if os.Getenv("NO_COLOR")!=""||os.Getenv("TERM")=="dumb"{return false}
  f,ok:=w.(*os.File);if !ok{return false}
- return term.IsTerminal(int(f.Fd()))
+ return isTerminal(f.Fd())
 }
 func(l *callLogger) paint(code,s string)string{if !l.color{return s};return "\x1b["+code+"m"+s+"\x1b[0m"}
 // Escape untrusted terminal controls, including C1 escape sequences. Color is
