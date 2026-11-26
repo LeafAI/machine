@@ -110,11 +110,11 @@ logging:
 
 ### Compact log layout
 
-Tool calls use local time `YY-MM HH:MM:SS`, single-letter levels `D/I/W/E`, minimum four-digit sequence numbers and `>` / `<` for start / completion. With `log_arguments: true`, tool-specific key/value summaries show paths, commands, ranges and search patterns; file bodies and replacement strings are represented by byte counts. Free-form arguments may still contain secrets. Example:
+Tool calls use local time `YY-MM HH:MM:SS`, single-letter levels `D/I/W/E`, minimum four-digit sequence numbers and `<` / `>` for incoming request / outgoing result. With `log_arguments: true`, tool-specific key/value summaries show paths, commands, ranges and search patterns; file bodies and replacement strings are represented by byte counts. Free-form arguments may still contain secrets. Example:
 
 ```text
-26-11 14:20:01 I 0001 file_read > path="main.go" lines=1-80
-26-11 14:20:01 I 0001 file_read < ok 3ms
+26-11 14:20:01 I 0001 file_read < path="main.go" lines=1-80
+26-11 14:20:01 I 0001 file_read > ok 3ms
 ```
 
 ### Forward-compatible configuration
@@ -152,3 +152,7 @@ proxy:
 ```
 
 Supported schemes are http, https, socks4, socks4a, socks5 and socks5h. Specify a port. HTTP(S) and SOCKS5 credentials can be embedded in the URL (percent-encode special characters); SOCKS4 supports only a user ID. Environment references such as `${MACHINE_PROXY_URL}` are expanded. Proxy configuration is disabled by default and preserves inherited proxy behavior when disabled or when the corresponding scope is false. Tunnel routing is configured once at startup, via the default HTTP transport cloned by the embedded SDK; restart to change it. Shell proxy settings apply to the next call via standard uppercase and lowercase proxy environment variables. Shell programs may ignore these variables; this is not a network sandbox. SOCKS4/4a tunnel connections use a native handshake, and shell support depends on the application. Loopback destinations bypass configured proxy routing. No direct fallback is attempted on a proxy connection failure for proxied HTTP requests. Keep credentials out of tool arguments and output logs. The tunnel SDK's own proxy detection/telemetry still uses inherited environment variables and may not recognize the configured transport route. Do not configure the SDK's integration Unix socket override together with a YAML tunnel proxy.
+
+### Terminal colors
+
+Set `logging.color: auto` (default), `always`, or `never`. Auto detects stderr TTYs on macOS and Linux and respects nonempty `NO_COLOR` and `TERM=dumb`. Standard ANSI colors work with Kitty and other compatible terminals. Incoming requests use `<` (cyan), outgoing results use `>` (magenta), sequence numbers are blue, and severity is color-coded. Tool data is sanitized for terminal control characters. This setting controls machine's own logs, not the tunnel SDK's internal logging. Restart to apply.

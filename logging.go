@@ -12,9 +12,11 @@ import (
  "unicode/utf8"
  "sync/atomic"
  "time"
+
 )
 
 type LoggingConfig struct {
+ Color string `yaml:"color"`
  Level string `yaml:"level"`
  TunnelLevel string `yaml:"tunnel_level"`
  LogArguments bool `yaml:"log_arguments"`
@@ -22,23 +24,37 @@ type LoggingConfig struct {
  LogOutput bool `yaml:"log_output"`
  MaxOutputBytes int `yaml:"max_output_bytes"`
 }
-func defaultLogging() LoggingConfig{return LoggingConfig{Level:"info",TunnelLevel:"warn",MaxArgumentBytes:512,MaxOutputBytes:1024}}
+func defaultLogging() LoggingConfig{return LoggingConfig{Color:"auto",Level:"info",TunnelLevel:"warn",MaxArgumentBytes:512,MaxOutputBytes:1024}}
 func logLevel(s string)(slog.Level,error){
  switch s{case "debug":return slog.LevelDebug,nil;case "info":return slog.LevelInfo,nil;case "warn":return slog.LevelWarn,nil;case "error":return slog.LevelError,nil;default:return 0,fmt.Errorf("invalid logging level")}
 }
 func(c LoggingConfig) validate()error{
+ switch c.Color{case "","auto","always","never":default:return fmt.Errorf("invalid logging.color: expected auto, always or never")}
  if _,e:=logLevel(c.Level);e!=nil{return e};if _,e:=logLevel(c.TunnelLevel);e!=nil{return e}
  if c.MaxArgumentBytes<64||c.MaxArgumentBytes>8192{return fmt.Errorf("invalid logging.max_argument_bytes")}
  if c.MaxOutputBytes<64||c.MaxOutputBytes>8192{return fmt.Errorf("invalid logging.max_output_bytes")}
  return nil
 }
 var callSequence atomic.Uint64
-type callLogger struct{cfg LoggingConfig; logger *log.Logger}
-func newCallLogger(c LoggingConfig,w io.Writer)*callLogger{return &callLogger{c,log.New(w,"",0)}}
+type callLogger struct{cfg LoggingConfig; logger *log.Logger; color bool}
+func newCallLogger(c LoggingConfig,w io.Writer)*callLogger{return &callLogger{cfg:c,logger:log.New(w,"",0),color:useLogColor(c.Color,w)}}
+func useLogColor(mode string,w io.Writer)bool{
+ switch mode{case "always":return true;case "never":return false}
+ if os.Getenv("NO_COLOR")!=""||os.Getenv("TERM")=="dumb"{return false}
+ f,ok:=w.(*os.File);if !ok{return false}
+ return isTerminal(f.Fd())
+}
+func(l *callLogger) paint(code,s string)string{if !l.color{return s};return "\x1b["+code+"m"+s+"\x1b[0m"}
+// Escape untrusted terminal controls, including C1 escape sequences. Color is
+// added only by paint, after sanitizing message data.
+func safeLogText(s string)string{
+ return strings.Map(func(r rune)rune{if r<32||(r>=127&&r<=159){return -1};return r},s)
+}
 func(l *callLogger) line(level slog.Level,format string,args ...any){
  threshold,_:=logLevel(l.cfg.Level);if level<threshold{return}
  letter:="I";switch level{case slog.LevelDebug:letter="D";case slog.LevelWarn:letter="W";case slog.LevelError:letter="E"}
- l.logger.Printf("%s %s %s",time.Now().Format("06-01 15:04:05"),letter,fmt.Sprintf(format,args...))
+ code:="32";switch level{case slog.LevelDebug:code="90";case slog.LevelWarn:code="33";case slog.LevelError:code="31"}
+ l.logger.Printf("%s %s %s",l.paint("90",time.Now().Format("06-01 15:04:05")),l.paint(code,letter),safeLogText(fmt.Sprintf(format,args...)))
 }
 // Only display known fields; arbitrary nested values and file bodies are never logged.
 var argumentFields=map[string][]string{
@@ -111,12 +127,19 @@ func(l *callLogger) output(v any)string{
 }
 func(l *callLogger) begin(name string,in any)func(bool,string,...any){
  id:=callSequence.Add(1);start:=time.Now()
- l.line(slog.LevelInfo,"%04d %s >%s",id,safeToolName(name),l.arguments(name,in))
+ l.callLine(slog.LevelInfo,id,name,"<",l.arguments(name,in)) // incoming request
+ 
  return func(ok bool,details string,output ...any){
   level:=slog.LevelInfo;status:="ok";if !ok{level=slog.LevelWarn;status="error"}
   if len(output)>0{details+=l.output(output[0])}
-  l.line(level,"%04d %s < %s %s%s",id,safeToolName(name),status,time.Since(start).Round(time.Millisecond),details)
+  l.callLine(level,id,name,">",fmt.Sprintf(" %s %s%s",status,time.Since(start).Round(time.Millisecond),details))
  }
+}
+func(l *callLogger) callLine(level slog.Level,id uint64,name,direction,details string){
+ threshold,_:=logLevel(l.cfg.Level);if level<threshold{return}
+ letter,code:="I","32";switch level{case slog.LevelDebug:letter,code="D","90";case slog.LevelWarn:letter,code="W","33";case slog.LevelError:letter,code="E","31"}
+ arrow:="36";if direction==">"{arrow="35"}
+ l.logger.Printf("%s %s %s %s %s%s",l.paint("90",time.Now().Format("06-01 15:04:05")),l.paint(code,letter),l.paint("34",fmt.Sprintf("%04d",id)),l.paint("1",safeLogText(safeToolName(name))),l.paint(arrow,direction),safeLogText(details))
 }
 func safeToolName(name string)string{if knownTools[name]{return name};return strconv.Quote(name)}
 func newServerCallLogger(c Config)*callLogger{
