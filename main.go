@@ -85,6 +85,7 @@ type Input struct {
  OutputMode string `json:"output_mode,omitempty"`
 }
 type Output struct {
+ ToolCallID string `json:"tool_call_id,omitempty"`
  Stdout string `json:"stdout"`
  Stderr string `json:"stderr"`
  ExitCode int `json:"exit_code"`
@@ -173,7 +174,7 @@ func newMachineServer(c Config,configPath string)*mcp.Server{
  calls:=newServerCallLogger(c)
  calls.line(slog.LevelInfo,"logging args=%t output=%t arg_limit=%d output_limit=%d",calls.cfg.LogArguments,calls.cfg.LogOutput,calls.cfg.MaxArgumentBytes,calls.cfg.MaxOutputBytes)
  if c.enabled("shell"){mcp.AddTool(server,&mcp.Tool{Name:"shell",Description:"Execute an arbitrary non-interactive shell command with the server user permissions. May change files and system state."},func(ctx context.Context,_ *mcp.CallToolRequest,in Input)(result *mcp.CallToolResult,out Output,err error){
-  finish:=calls.begin("shell",in);defer func(){finish(err==nil&&out.Error==""&&out.ExitCode==0,fmt.Sprintf(" exit=%d stdout_bytes=%d stderr_bytes=%d timeout=%t truncated=%t",out.ExitCode,len(out.Stdout),len(out.Stderr),out.TimedOut,out.Truncated),struct{Stdout string `json:"stdout"`;Stderr string `json:"stderr"`;Error string `json:"error,omitempty"`}{out.Stdout,out.Stderr,out.Error})}()
+  callID:=newToolCallID();finish:=calls.beginWithID("shell",in,callID);defer func(){out.ToolCallID=callID;finish(err==nil&&out.Error==""&&out.ExitCode==0,fmt.Sprintf(" exit=%d stdout_bytes=%d stderr_bytes=%d timeout=%t truncated=%t",out.ExitCode,len(out.Stdout),len(out.Stderr),out.TimedOut,out.Truncated),struct{Stdout string `json:"stdout"`;Stderr string `json:"stderr"`;Error string `json:"error,omitempty"`}{out.Stdout,out.Stderr,out.Error})}()
   if err:=ctx.Err();err!=nil{return nil,Output{},err}
   select{case slots<-struct{}{}:defer func(){<-slots}();default:return &mcp.CallToolResult{},Output{ExitCode:-1,Error:"shell concurrency limit reached"},nil}
   return shellToolFromConfig(ctx,configPath,in)
