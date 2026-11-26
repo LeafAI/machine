@@ -29,12 +29,13 @@ func(t *correlationTransport) Connect(ctx context.Context)(mcp.Connection,error)
  go c.dispatch()
  return c,nil
 }
-type requestKey struct{shard,request string}
+type requestKey struct{shard,request,session string}
 func keyFromContext(ctx context.Context)(requestKey,error){
  id,ok:=tunnelctx.RequestIDFromContext(ctx)
  if !ok{return requestKey{},errors.New("tunnel correlation: missing upstream request ID")}
  shard,_:=tunnelctx.ShardTokenFromContext(ctx)
- return requestKey{shard,id},nil
+ session,_:=tunnelctx.SessionIDFromContext(ctx)
+ return requestKey{shard,id,session},nil
 }
 type pendingRequest struct{
  key requestKey
@@ -146,8 +147,17 @@ func(c *correlationConn) dispatch(){
   c.mu.Unlock()
   if c.logger!=nil{
    if p==nil{c.logger.line(slog.LevelWarn,"tunnel dropped unmatched response generation=%s",c.generation)}else{
-    c.logger.line(slog.LevelDebug,"tunnel response generation=%s request=%q session=%q rpc=%q alias=%q",c.generation,p.key.request,p.session,fmt.Sprint(p.original.Raw()),fmt.Sprint(p.alias.Raw()))
+    c.logger.line(slog.LevelDebug,"tunnel response generation=%s request=%q session=%q rpc=%q alias=%q call_id=%q",c.generation,p.key.request,p.session,fmt.Sprint(p.original.Raw()),fmt.Sprint(p.alias.Raw()),responseToolCallID(resp))
    }
   }
  }
+}
+
+// Extract only our server-generated correlation ID, never tool output, for logs.
+func responseToolCallID(resp *jsonrpc.Response)string{
+ var result struct{StructuredContent struct{ToolCallID string `json:"tool_call_id"`} `json:"structuredContent"`}
+ if json.Unmarshal(resp.Result,&result)!=nil{return ""}
+ id:=result.StructuredContent.ToolCallID
+ if len(id)>80||len(id)<6||id[:5]!="call_"{return ""}
+ return id
 }
