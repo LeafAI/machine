@@ -16,6 +16,11 @@ tunnel:
   # id: tunnel_REPLACE_WITH_REAL_ID
   # api_key: "sk-REPLACE_WITH_RUNTIME_KEY"
   # organization_id: org-...
+  # poll_timeout_seconds: 30
+  # poll_deadline_guardrail_seconds: 5
+  # reconnect:
+  #   initial_delay_seconds: 1
+  #   max_delay_seconds: 30
 
 # Optional native tools; uncomment and customize to enable.
 # tools:
