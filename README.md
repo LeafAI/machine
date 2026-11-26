@@ -160,3 +160,19 @@ Set `logging.color: auto` (default), `always`, or `never`. Auto detects stderr T
 ### Tunnel request correlation
 
 The in-memory tunnel transport uses a single physical reader per connection generation, unique downstream RPC aliases, and a bounded pending map keyed by upstream request, shard and session identifiers. The original JSON-RPC ID is restored only when returning the response to the matching SDK worker. Missing, duplicate, cancelled and unmatched requests fail closed; stale replies are discarded. Tool responses include a machine-generated `tool_call_id` matching the compact start/completion logs. Debug logs associate tunnel request, session, connection generation, RPC alias and tool call identifiers. The upstream SDK still controls session authentication, delivery and deadlines. This layer does not provide tenant isolation, and does not extend the control-plane deadline or preserve a physical connection the SDK closes. Unowned server-initiated messages are not forwarded; machine tools do not currently use progress notifications or server-initiated requests. Async shell jobs are a separate feature.
+
+### Tunnel polling and reconnect timing
+
+The embedded SDK marks a tunnel ready after its first successful control-plane poll. With no queued commands, that poll can wait for the configured long-poll timeout (30 seconds by default). The tunnel can receive work before readiness is logged. To shorten idle readiness confirmation, configure:
+
+```yaml
+tunnel:
+  enabled: true
+  poll_timeout_seconds: 5
+  poll_deadline_guardrail_seconds: 5
+  reconnect:
+    initial_delay_seconds: 1
+    max_delay_seconds: 30
+```
+
+Defaults are 30, 5, 1 and 30 seconds respectively; zero selects the default. Accepted ranges are poll 1–120, guardrail 1–60, initial delay 1–60 and max delay initial–300 seconds. All settings are startup-only. Shorter polling increases idle control-plane requests and may affect SDK HTTP deadlines for response delivery and metadata as well; the guardrail is not a tool execution timeout. The embedded SDK does not expose a separate first-poll setting. The supervisor logs the attempt number, SDK startup duration, time spent awaiting first successful poll and total attempt readiness time; SDK cleanup duration is available at debug level. Retry delay is separate from those timings. This does not extend the upstream tool request deadline.
