@@ -25,6 +25,7 @@ func TestTunnelCorrelationConcurrentReusedIDs(t *testing.T){
  id,_:=jsonrpc.MakeID(float64(1))
  var wg sync.WaitGroup
  errs:=make(chan error,count+1)
+ wg.Add(1)
  for i:=0;i<count;i++{wg.Add(1);go func(i int){defer wg.Done()
   s:=fmt.Sprint(i);call:=requestContext(ctx,"session-"+s,"request-"+s)
   if e:=c.Write(call,&jsonrpc.Request{ID:id,Method:"tools/call",Params:json.RawMessage(fmt.Sprintf("%q",s))});e!=nil{errs<-e;return}
@@ -32,6 +33,7 @@ func TestTunnelCorrelationConcurrentReusedIDs(t *testing.T){
   resp,ok:=m.(*jsonrpc.Response);if !ok||resp.ID!=id||string(resp.Result)!=fmt.Sprintf("%q",s){errs<-fmt.Errorf("wrong response for %s: %v",s,m)}
  }(i)}
  go func(){
+  defer wg.Done()
   var reqs []*jsonrpc.Request
   ids:=map[jsonrpc.ID]bool{}
   for i:=0;i<count;i++{m,e:=peer.Read(ctx);if e!=nil{errs<-e;return};q:=m.(*jsonrpc.Request);if ids[q.ID]||q.ID==id{errs<-fmt.Errorf("downstream ID collision");return};ids[q.ID]=true;reqs=append(reqs,q)}
