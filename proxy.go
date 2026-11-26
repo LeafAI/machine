@@ -51,6 +51,7 @@ func(p ProxyConfig) shellEnv(env []string)[]string{
 // constructing the SDK or starting any goroutines. Do not mutate it on reload.
 func(p ProxyConfig) configureTunnel()error{
  if !p.Enabled||!p.Tunnel{return nil}
+ if os.Getenv("TUNNEL_INTEGRATION_TUNNEL_SERVICE_SOCKET_PATH")!=""{return errors.New("configured tunnel proxy conflicts with SDK Unix socket override")}
  base,ok:=http.DefaultTransport.(*http.Transport);if !ok{return errors.New("unsupported default HTTP transport")}
  t:=base.Clone()
  u,e:=url.Parse(p.URL);if e!=nil{return errors.New("invalid proxy URL")}
