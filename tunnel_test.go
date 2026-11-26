@@ -2,6 +2,8 @@ package main
 
 import (
  "reflect"
+ "os"
+ "path/filepath"
  "context"
  "errors"
  "time"
@@ -62,4 +64,30 @@ func TestTunnelSessionLossDoesNotDisableServer(t *testing.T){
   select{case <-done:case <-ctx.Done():t.Fatal("session did not close")}
   _=ss.Close()
  }
+}
+
+func TestTunnelTimingConfig(t *testing.T){
+ t.Setenv("CONTROL_PLANE_TUNNEL_ID","")
+ t.Setenv("CONTROL_PLANE_API_KEY","")
+ c:=TunnelConfig{Enabled:true,ID:"tunnel_0123456789abcdef0123456789abcdef",APIKey:"test-key"}
+ cfg,e:=c.sdkConfig();if e!=nil{t.Fatal(e)}
+ if cfg.PollTimeout!=30*time.Second||cfg.PollDeadlineGuardrail!=5*time.Second{t.Fatal("unexpected default SDK timing")}
+ if c.withTimingDefaults().Reconnect!=(ReconnectConfig{1,30}){t.Fatal("unexpected default reconnect timing")}
+ c.PollTimeoutSeconds=5;c.PollDeadlineGuardrailSeconds=8;c.Reconnect=ReconnectConfig{2,15}
+ cfg,e=c.sdkConfig();if e!=nil||cfg.PollTimeout!=5*time.Second||cfg.PollDeadlineGuardrail!=8*time.Second{t.Fatalf("custom timing not propagated: %v",e)}
+ for _,bad:=range []TunnelConfig{
+  {PollTimeoutSeconds:-1},{PollTimeoutSeconds:121},{PollDeadlineGuardrailSeconds:61},
+  {PollDeadlineGuardrailSeconds:-1},{Reconnect:ReconnectConfig{-1,30}},
+  {Reconnect:ReconnectConfig{61,90}},{Reconnect:ReconnectConfig{10,5}},
+  {Reconnect:ReconnectConfig{1,301}},
+ }{if bad.validateTiming()==nil{t.Fatalf("invalid timing accepted: %+v",bad)}}
+}
+func TestTunnelTimingYAML(t *testing.T){
+ p:=filepath.Join(t.TempDir(),"machine.yaml")
+ config:="auth_required: false\ntunnel:\n  poll_timeout_seconds: 5\n  reconnect:\n    initial_delay_seconds: 2\n"
+ if e:=os.WriteFile(p,[]byte(config),0600);e!=nil{t.Fatal(e)}
+ c,e:=loadConfig(p);if e!=nil{t.Fatal(e)}
+ if c.Tunnel.PollTimeoutSeconds!=5||c.Tunnel.PollDeadlineGuardrailSeconds!=5||c.Tunnel.Reconnect!=(ReconnectConfig{2,30}){t.Fatal("YAML timing/defaults mismatch")}
+ if e=os.WriteFile(p,[]byte("auth_required: false\ntunnel:\n  poll_timeout_seconds: -1\n"),0600);e!=nil{t.Fatal(e)}
+ if _,e=loadConfig(p);e==nil{t.Fatal("invalid timing accepted by config loader")}
 }
