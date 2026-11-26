@@ -11,6 +11,10 @@ import (
  "github.com/modelcontextprotocol/go-sdk/jsonrpc"
  "github.com/modelcontextprotocol/go-sdk/mcp"
  "github.com/openai/tunnel-client/pkg/tunnelctx"
+ "github.com/openai/tunnel-client/pkg/mcpclient"
+ "os"
+ "path/filepath"
+ "strings"
 )
 
 func requestContext(ctx context.Context,session,request string)context.Context{
@@ -64,4 +68,48 @@ func TestTunnelCorrelationDropsLateResponse(t *testing.T){
  if r:=m.(*jsonrpc.Response);r.ID!=id||string(r.Result)!=`"NEW"`{t.Fatal("late response crossed request boundary")}
  if e=<-peerErr;e!=nil{t.Fatal(e)}
  if _,e=c.Read(ctx);e==nil{t.Fatal("unowned read accepted")}
+}
+
+func TestTunnelCorrelationThroughSDKSharedTransport(t *testing.T){
+ ctx,cancel:=context.WithTimeout(context.Background(),10*time.Second);defer cancel()
+ path:=filepath.Join(t.TempDir(),"machine.yaml")
+ if e:=os.WriteFile(path,[]byte("auth_required: false\nmax_concurrent: 4\n"),0600);e!=nil{t.Fatal(e)}
+ cfg,e:=loadConfig(path);if e!=nil{t.Fatal(e)}
+ srv:=newMachineServer(cfg,path)
+ st,ct:=mcp.NewInMemoryTransports()
+ session,e:=srv.Connect(ctx,st,nil);if e!=nil{t.Fatal(e)};defer session.Close()
+ transport:=mcpclient.NewForwardingTransport(mcpclient.NewSharedConnectionTransport(&correlationTransport{base:ct,ctx:ctx}))
+ id,_:=jsonrpc.MakeID(float64(1))
+ call:=func(session,request,method string,params string)(*jsonrpc.Response,error){
+  cctx:=requestContext(ctx,session,request)
+  conn,e:=transport.Connect(cctx);if e!=nil{return nil,e}
+  _,e=conn.Write(cctx,nil,&jsonrpc.Request{ID:id,Method:method,Params:json.RawMessage(params)});if e!=nil{return nil,e}
+  msg,e:=conn.Read(cctx);if e!=nil{return nil,e}
+  resp,ok:=msg.(*jsonrpc.Response);if !ok||resp.ID!=id{return nil,fmt.Errorf("unexpected RPC response ID")}
+  if resp.Error!=nil{return nil,resp.Error}
+  return resp,nil
+ }
+ if _,e=call("init","initialize","initialize",`{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}`);e!=nil{t.Fatal(e)}
+ nctx:=requestContext(ctx,"init","notification")
+ conn,e:=transport.Connect(nctx);if e!=nil{t.Fatal(e)};defer conn.Close()
+ if _,e=conn.Write(nctx,nil,&jsonrpc.Request{Method:"notifications/initialized"});e!=nil{t.Fatal(e)}
+ var wg sync.WaitGroup;ids:=make(chan string,2);errs:=make(chan error,2)
+ for i:=0;i<2;i++{wg.Add(1);go func(i int){defer wg.Done()
+  marker:=fmt.Sprintf("marker-%d",i)
+  cmd:="printf "+marker;if i==0{cmd="sleep 0.2; "+cmd}
+  p,_:=json.Marshal(map[string]any{"name":"shell","arguments":map[string]string{"command":cmd}})
+  // The two sessions deliberately reuse the same RPC and request ID.
+  resp,e:=call(fmt.Sprint(i),"same-request","tools/call",string(p))
+  if e!=nil{errs<-e;return}
+  var result struct{StructuredContent Output `json:"structuredContent"`}
+  if e=json.Unmarshal(resp.Result,&result);e!=nil{errs<-e;return}
+  out:=result.StructuredContent
+  if out.Stdout!=marker||out.ExitCode!=0||!strings.HasPrefix(out.ToolCallID,"call_"){errs<-fmt.Errorf("wrong tool result for %s: %+v",marker,out);return}
+  if responseToolCallID(resp)!=out.ToolCallID{errs<-fmt.Errorf("tool call ID correlation mismatch");return}
+  ids<-out.ToolCallID
+ }(i)}
+ wg.Wait();close(errs);close(ids)
+ for e:=range errs{t.Error(e)}
+ seen:=map[string]bool{};for id:=range ids{if seen[id]{t.Fatal("tool call ID reused")};seen[id]=true}
+ if len(seen)!=2{t.Fatal("missing tool call IDs")}
 }
