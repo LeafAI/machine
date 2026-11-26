@@ -97,7 +97,7 @@ func runTunnelGeneration(ctx context.Context,server *mcp.Server,cfg tunnelclient
   if err:=session.Close();err!=nil&&ctx.Err()==nil{failure=errors.Join(failure,fmt.Errorf("MCP session close: %w",err))}
   if done!=nil{<-done}
  }()
- client,err:=tunnelclient.New(cfg,ct);if err!=nil{return fmt.Errorf("tunnel construct: %w",err)}
+ client,err:=tunnelclient.New(cfg,&correlationTransport{base:ct,ctx:generation,logger:logger});if err!=nil{return fmt.Errorf("tunnel construct: %w",err)}
  if err=client.Start(generation);err!=nil{return fmt.Errorf("tunnel start: %w",err)}
  defer func(){
   cancel()
