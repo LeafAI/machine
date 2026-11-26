@@ -2,6 +2,7 @@ package main
 
 import (
  "encoding/json"
+ "crypto/rand"
  "fmt"
  "io"
  "log"
@@ -125,14 +126,16 @@ func(l *callLogger) output(v any)string{
  }
  return " output=[truncated]"
 }
-func(l *callLogger) begin(name string,in any)func(bool,string,...any){
+func newToolCallID()string{return "call_"+rand.Text()}
+func(l *callLogger) begin(name string,in any)func(bool,string,...any){return l.beginWithID(name,in,newToolCallID())}
+func(l *callLogger) beginWithID(name string,in any,callID string)func(bool,string,...any){
  id:=callSequence.Add(1);start:=time.Now()
- l.callLine(slog.LevelInfo,id,name,"<",l.arguments(name,in)) // incoming request
+ l.callLine(slog.LevelInfo,id,name,"<"," call_id="+callID+l.arguments(name,in)) // incoming request
  
  return func(ok bool,details string,output ...any){
   level:=slog.LevelInfo;status:="ok";if !ok{level=slog.LevelWarn;status="error"}
   if len(output)>0{details+=l.output(output[0])}
-  l.callLine(level,id,name,">",fmt.Sprintf(" %s %s%s",status,time.Since(start).Round(time.Millisecond),details))
+  l.callLine(level,id,name,">",fmt.Sprintf(" %s %s call_id=%s%s",status,time.Since(start).Round(time.Millisecond),callID,details))
  }
 }
 func(l *callLogger) callLine(level slog.Level,id uint64,name,direction,details string){
