@@ -35,6 +35,7 @@ tunnel:
 
 # Compact tool logging (arguments may contain secrets; opt in deliberately).
 # logging:
+#   color: auto
 #   level: info
 #   tunnel_level: warn
 #   log_arguments: true
