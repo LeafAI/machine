@@ -48,3 +48,9 @@ func TestSOCKS4aHandshake(t *testing.T){
  c,e:=dialSOCKS4(ctx,&net.Dialer{},u,"example.org:443");if e!=nil{t.Fatal(e)};defer c.Close()
  if got:=<-seen;got!=string(want){t.Fatal("incorrect SOCKS4a request")}
 }
+
+func TestProxyRejectsSocketOverride(t *testing.T){
+ t.Setenv("TUNNEL_INTEGRATION_TUNNEL_SERVICE_SOCKET_PATH","/tmp/test.sock")
+ p:=defaultProxy();p.Enabled=true;p.URL="http://localhost:7890"
+ if e:=p.configureTunnel();e==nil{t.Fatal("socket override could bypass proxy")}
+}
