@@ -139,3 +139,16 @@ Both argument and output previews are disabled by default. The startup log repor
 ### Tunnel recovery and long-running commands
 
 An unexpected tunnel runtime shutdown or in-memory MCP session closure no longer terminates machine's local HTTP server. The tunnel supervisor creates a fresh SDK client and MCP session after a retry delay starting at one second and capped at 30 seconds. It logs the disconnection reason and retry delay, and stops retrying promptly on process shutdown. A lost request may be cancelled; machine never automatically replays shell commands or other tool calls. The control plane can enforce its own response deadline independently of machine's shell timeout. For long-running work, use short invocations to start a job and inspect progress/result separately, taking care not to repeat side effects. A longer shell timeout does not extend the control-plane response deadline.
+
+## Optional outbound proxy
+
+```yaml
+proxy:
+  enabled: true
+  url: socks5://127.0.0.1:7891
+  no_proxy: [localhost, 127.0.0.1, '::1']
+  tunnel: true
+  shell: true
+```
+
+Supported schemes are http, https, socks4, socks4a, socks5 and socks5h. Specify a port. HTTP(S) and SOCKS5 credentials can be embedded in the URL (percent-encode special characters); SOCKS4 supports only a user ID. Environment references such as `${MACHINE_PROXY_URL}` are expanded. Proxy configuration is disabled by default and preserves inherited proxy behavior when disabled or when the corresponding scope is false. Tunnel routing is configured once at startup, via the default HTTP transport cloned by the embedded SDK; restart to change it. Shell proxy settings apply to the next call via standard uppercase and lowercase proxy environment variables. Shell programs may ignore these variables; this is not a network sandbox. SOCKS4/4a tunnel connections use a native handshake, and shell support depends on the application. Loopback destinations bypass configured proxy routing. No direct fallback is attempted on a proxy connection failure for proxied HTTP requests. Keep credentials out of tool arguments and output logs. The tunnel SDK's own proxy detection/telemetry still uses inherited environment variables and may not recognize the configured transport route. Do not configure the SDK's integration Unix socket override together with a YAML tunnel proxy.
