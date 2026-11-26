@@ -34,6 +34,7 @@ type Config struct {
  Tools ToolConfig `yaml:"tools"`
  Filesystem FilesystemConfig `yaml:"filesystem"`
  Batch BatchConfig `yaml:"batch"`
+ Proxy ProxyConfig `yaml:"proxy"`
  Tunnel TunnelConfig `yaml:"tunnel"`
  Shell string `yaml:"shell"`
  AdditionalPaths []string `yaml:"additional_paths"`
@@ -45,7 +46,7 @@ type Config struct {
 func loadConfig(path string) (Config,error) {return loadConfigWithWarnings(path,false)}
 
 func loadConfigWithWarnings(path string,warnUnknown bool) (Config,error) {
- c:=Config{Logging:defaultLogging(),Tools:ToolConfig{Enabled:[]string{"shell"}},Filesystem:defaultFilesystem(),Batch:defaultBatch(),AuthRequired:true,Listen:"127.0.0.1:6666",Shell:"/bin/sh",TimeoutSeconds:300,MaxOutputBytes:1048576,MaxConcurrent:4}
+ c:=Config{Proxy:defaultProxy(),Logging:defaultLogging(),Tools:ToolConfig{Enabled:[]string{"shell"}},Filesystem:defaultFilesystem(),Batch:defaultBatch(),AuthRequired:true,Listen:"127.0.0.1:6666",Shell:"/bin/sh",TimeoutSeconds:300,MaxOutputBytes:1048576,MaxConcurrent:4}
  f,e:=os.OpenFile(path,os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW,0); if e!=nil{return c,e}; defer f.Close()
  st,e:=f.Stat(); if e!=nil{return c,e}
  if !st.Mode().IsRegular() || st.Mode().Perm()&0077!=0 || st.Size()>1<<20{return c,errors.New("configuration must be a regular private file (chmod 600)")}
@@ -70,6 +71,7 @@ func loadConfigWithWarnings(path string,warnUnknown bool) (Config,error) {
   if !filepath.IsAbs(p)||strings.ContainsRune(p,os.PathListSeparator){return c,errors.New("additional_paths must be absolute directories")}
   c.AdditionalPaths[i]=p
  }
+ if e=c.Proxy.validate();e!=nil{return c,e}
  if e=c.Logging.validate();e!=nil{return c,e}
  if e=c.validateTools();e!=nil{return c,e}
  return c,nil
@@ -118,7 +120,7 @@ func run(ctx context.Context,c Config,in Input)(out Output){
  cmd:=exec.CommandContext(ctx,c.Shell,"-c",in.Command);cmd.Dir=in.Workdir
  paths:=append([]string{},c.AdditionalPaths...)
  if p:=os.Getenv("PATH");p!=""{paths=append(paths,p)}
- cmd.Env=append(shellEnvironment(cmd.Environ()),"PATH="+strings.Join(paths,string(os.PathListSeparator)))
+ cmd.Env=append(c.Proxy.shellEnv(shellEnvironment(cmd.Environ())),"PATH="+strings.Join(paths,string(os.PathListSeparator)))
  cmd.SysProcAttr=&syscall.SysProcAttr{Setpgid:true}
  cmd.Cancel=func()error{e:=syscall.Kill(-cmd.Process.Pid,syscall.SIGKILL);if errors.Is(e,syscall.ESRCH){return os.ErrProcessDone};return e}
  cmd.WaitDelay=2*time.Second
@@ -185,6 +187,7 @@ func main(){
  configPath:=filepath.Join(home,".config","machine.yaml")
  c,e:=loadConfigWithWarnings(configPath,true);if e!=nil{log.Fatal(e)}
  if e=c.Tunnel.validate();e!=nil{log.Fatal(e)}
+ if c.Tunnel.Enabled{if e=c.Proxy.configureTunnel();e!=nil{log.Fatal(e)}}
  server:=newMachineServer(c,configPath)
  handler:=mcp.NewStreamableHTTPHandler(func(*http.Request)*mcp.Server{return server},&mcp.StreamableHTTPOptions{Stateless:true})
  mux:=http.NewServeMux();mux.Handle("/mcp",protectWithAuth(c.AuthRequired,c.APIKey,handler))
