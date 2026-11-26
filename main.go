@@ -213,9 +213,9 @@ func serveMachine(srv *http.Server,server *mcp.Server,tunnel TunnelConfig,loggin
  case err:=<-httpDone:
   httpDone=nil
   if !errors.Is(err,http.ErrServerClosed){failure=err}
- case <-tunnelDone:
+ case err:=<-tunnelDone:
   tunnelDone=nil
-  if ctx.Err()==nil{failure=errors.New("OpenAI tunnel stopped unexpectedly")}
+  if ctx.Err()==nil{if err==nil{err=errors.New("tunnel supervisor exited unexpectedly")};failure=err}
  }
  stop()
  shutdown,cancel:=context.WithTimeout(context.Background(),8*time.Second);defer cancel()
