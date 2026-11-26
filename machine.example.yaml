@@ -42,3 +42,11 @@ tunnel:
 
 #   log_output: false
 #   max_output_bytes: 1024
+
+# Optional outbound proxy (disabled by default).
+# proxy:
+#   enabled: true
+#   url: socks5://127.0.0.1:7891
+#   no_proxy: [localhost, 127.0.0.1, '::1']
+#   tunnel: true
+#   shell: true
