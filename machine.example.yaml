@@ -56,3 +56,12 @@ tunnel:
 #   no_proxy: [localhost, 127.0.0.1, '::1']
 #   tunnel: true
 #   shell: true
+
+# Optional macOS desktop notification tool: add notify to tools.enabled.
+# notify:
+#   default_title: Machine
+#   default_mode: dialog
+#   default_timeout_seconds: 0
+#   default_sound: ""
+#   max_message_bytes: 4096
+#   max_pending_dialogs: 4

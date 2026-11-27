@@ -34,6 +34,8 @@ func registerNative[I,O any](server *mcp.Server,start Config,path string,slots c
  })
 }
 func registerNativeTools(server *mcp.Server,c Config,path string,slots chan struct{},calls *callLogger){
+ notifier:=newNotifier(calls)
+ registerNative(server,c,path,slots,calls,"notify","Submit a macOS dialog or system notification on the local desktop. Returns immediately; submitted does not confirm display or acknowledgement.",notifier.submit)
  registerNative(server,c,path,slots,calls,"file_read","Read an explicit inclusive line range of a UTF-8 file; returns content and SHA-256.",fileRead)
  registerNative(server,c,path,slots,calls,"file_write","Create a UTF-8 file, or explicitly overwrite it. Supports conditional SHA-256.",fileWrite)
  registerNative(server,c,path,slots,calls,"file_edit","Replace an exact unique string or inclusive line range; optional expected SHA-256.",fileEdit)

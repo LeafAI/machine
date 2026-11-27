@@ -33,7 +33,7 @@ type BatchConfig struct {
 }
 func defaultFilesystem() FilesystemConfig {return FilesystemConfig{MaxReadBytes:1048576,MaxWriteBytes:4194304,MaxSearchResults:200,RespectGitignore:true}}
 func defaultBatch() BatchConfig{return BatchConfig{MaxOperations:16,MaxParallel:4,MaxOutputBytes:262144}}
-var knownTools=map[string]bool{"shell":true,"file_read":true,"file_write":true,"file_edit":true,"file_info":true,"file_search":true,"file_grep":true,"file_glob":true,"directory_list":true,"batch":true}
+var knownTools=map[string]bool{"shell":true,"file_read":true,"file_write":true,"file_edit":true,"file_info":true,"file_search":true,"file_grep":true,"file_glob":true,"directory_list":true,"batch":true,"notify":true}
 func (c Config) enabled(name string)bool{for _,n:=range c.Tools.Enabled{if n==name{return true}};return false}
 func expandPath(p string)(string,error){
  p=os.ExpandEnv(p)
@@ -50,7 +50,7 @@ func(c *Config) validateTools()error{
  for i,p:=range f.AllowedRoots{v,e:=expandPath(p);if e!=nil{return e};f.AllowedRoots[i]=v}
  if f.DefaultWorkdir!=""{v,e:=expandPath(f.DefaultWorkdir);if e!=nil{return e};f.DefaultWorkdir=v}
  if c.Batch.MaxOperations<1||c.Batch.MaxOperations>64||c.Batch.MaxParallel<1||c.Batch.MaxParallel>16||c.Batch.MaxOutputBytes<1024||c.Batch.MaxOutputBytes>4194304{return errors.New("invalid batch limits")}
- for _,n:=range c.Tools.Enabled{if n!="shell"&&len(f.AllowedRoots)==0{return errors.New("native tools require explicit filesystem.allowed_roots")}}
+ for _,n:=range c.Tools.Enabled{if n!="shell"&&n!="notify"&&len(f.AllowedRoots)==0{return errors.New("native tools require explicit filesystem.allowed_roots")}}
  return nil
 }
 type fileLocation struct{root *os.Root; name string; absolute string}
