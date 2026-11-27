@@ -176,3 +176,19 @@ tunnel:
 ```
 
 Defaults are 30, 5, 1 and 30 seconds respectively; zero selects the default. Accepted ranges are poll 1–120, guardrail 1–60, initial delay 1–60 and max delay initial–300 seconds. All settings are startup-only. Shorter polling increases idle control-plane requests and may affect SDK HTTP deadlines for response delivery and metadata as well; the guardrail is not a tool execution timeout. The embedded SDK does not expose a separate first-poll setting. The supervisor logs the attempt number, SDK startup duration, time spent awaiting first successful poll and total attempt readiness time; SDK cleanup duration is available at debug level. Retry delay is separate from those timings. This does not extend the upstream tool request deadline.
+
+### macOS desktop notifications (opt-in)
+
+Add `notify` to `tools.enabled` to enable the eleventh tool. No filesystem roots are required for `notify` alone. Restart the server to register the tool. Defaults and limits under `notify` are reloaded for each invocation.
+
+```yaml
+notify:
+  default_title: Machine
+  default_mode: dialog
+  default_timeout_seconds: 0
+  default_sound: ""
+  max_message_bytes: 4096
+  max_pending_dialogs: 4
+```
+
+Example arguments: `{"message":"Task done","title":"Notice","mode":"dialog"}`. Use `mode: notification` for a Notification Center banner, optionally with `sound: Glass`. Dialogs have an OK button and optional `timeout_seconds` (0 means wait indefinitely); sounds apply only to notifications. An explicit empty sound disables the configured default. `notify` is unsupported on Linux and cannot be invoked through read-only `batch`. The response follows the native tool envelope: `{"tool_call_id":"call_...","result":{"status":"submitted","mode":"dialog"}}`. Submission confirms only that `/usr/bin/osascript` started, not that a popup was displayed or acknowledged. A graphical login session and appropriate macOS permissions/settings are required. A LaunchDaemon or headless SSH environment may not display UI. Notifications may contain sensitive text visible on screen and in process arguments. Message and title are excluded from argument logs. A fixed AppleScript receives literal argv values; no shell evaluation. Child processes are reaped asynchronously and share a bounded pending-process limit per server (1–32); this does not rate-limit completed notifications. Notifications have a 30-second process watchdog; timed dialogs have an additional 15-second watchdog. Untimed dialogs can remain open until acknowledged, including across tunnel reconnections. They are not durable jobs; process restart does not guarantee cleanup or delivery. Notification process failures after submission are logged without message content.
