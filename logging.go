@@ -69,6 +69,7 @@ var argumentFields=map[string][]string{
  "file_glob":{"path","pattern","max_results","respect_gitignore"},
  "directory_list":{"path","depth","include_hidden","max_entries"},
  "batch":{"parallel"},
+ "notify":{"mode","timeout_seconds","sound"},
 }
 var argumentAliases=map[string]string{"command":"cmd","workdir":"cwd","timeout_seconds":"timeout","max_output_bytes":"limit","output_mode":"mode","max_matches":"max","max_results":"max","max_entries":"max","context_lines":"context","respect_gitignore":"gitignore","include_hidden":"hidden","create_parents":"parents","expected_sha256":"sha256"}
 func shortValue(v any)string{
@@ -97,6 +98,7 @@ func(l *callLogger) arguments(name string,in any)string{
   label:=argumentAliases[key];if label==""{label=key}
   if val:=shortValue(v);val!=""{parts=append(parts,label+"="+val)}
  }
+ if name=="notify"{if v,ok:=obj["message"].(string);ok{parts=append(parts,fmt.Sprintf("message_bytes=%d",len(v)))}}
  if name=="file_write"{if v,ok:=obj["content"].(string);ok{parts=append(parts,fmt.Sprintf("content_bytes=%d",len(v)))}}
  if name=="file_edit"{for _,key:=range []string{"old_string","new_string","content"}{if v,ok:=obj[key].(string);ok{parts=append(parts,fmt.Sprintf("%s_bytes=%d",key,len(v)))}}}
  if name=="batch"{if ops,ok:=obj["operations"].([]any);ok{parts=append([]string{fmt.Sprintf("ops=%d",len(ops))},parts...)}}
